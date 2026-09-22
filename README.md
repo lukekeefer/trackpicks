@@ -153,3 +153,18 @@ Run `SUPABASE_CAUTION_DDL_UPDATE.sql` before deploying.
 - Movement is measured from the first line TrackPicks captured; it is not labeled as a sportsbook opening line.
 - Saved wagers are not modified by market updates or history snapshots.
 - Run `TRACKPICKS_LINE_MOVEMENT.sql` manually in Supabase before deploying this build. Do not commit the SQL file to the public repository.
+
+
+## Deploy/cache behavior
+
+TrackPicks now uses build-versioned JavaScript and CSS filenames plus `version.json` update detection.
+
+For each future deploy:
+1. Generate new versioned asset filenames (for example `app.YYYYMMDD-N.js` and `styles.YYYYMMDD-N.css`).
+2. Point `index.html` at those new filenames.
+3. Set the same build value in `BUILD_VERSION` and `version.json`.
+4. Upload/commit the changed files together.
+
+Open browser tabs and installed home-screen users check `version.json` when the app opens, when it returns to the foreground, and every five minutes. If a newer build exists, TrackPicks shows an update banner. Tapping Reload adds the new version to the page URL so the browser requests a fresh `index.html`, which then loads the new versioned assets.
+
+Do not add aggressive service-worker caching unless deliberately redesigned; TrackPicks depends on live Supabase data and favors predictable updates over offline caching.
