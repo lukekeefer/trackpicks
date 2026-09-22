@@ -145,3 +145,11 @@ Run `SUPABASE_CAUTION_DDL_UPDATE.sql` before deploying.
 - Reports include graded picks only.
 - CSV columns:
   `Week | Matchup | Bet Type | Line/Total | Who | Pick | Units | Result | Caution | DDL`
+
+## Line movement tracking
+- Each successful admin `Load Week` keeps `games` as the current DraftKings market and appends a snapshot to `game_odds_history`.
+- Full Slate shows a compact movement note only when the spread and/or total has changed from the first TrackPicks-captured snapshot.
+- The single-game screen shows recent captured line changes.
+- Movement is measured from the first line TrackPicks captured; it is not labeled as a sportsbook opening line.
+- Saved wagers are not modified by market updates or history snapshots.
+- Run `TRACKPICKS_LINE_MOVEMENT.sql` manually in Supabase before deploying this build. Do not commit the SQL file to the public repository.

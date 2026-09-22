@@ -31,7 +31,7 @@ const state = {
   sb: null, session: null, user: null,
   authReady: false,
   weeks: Array.from({ length: 12 }, (_, i) => ({ week: i + 1, enabled: i + 1 >= 4 })),
-  games: [], wagers: [], cautionGameIds: [],
+  games: [], wagers: [], cautionGameIds: [], oddsHistory: [],
   pickerOptions: ['Keef','Wilson','Both','Tail']
 };
 let tempKind='Spread', tempSelection=null, tempWho=null, tempLine='', tempUnits=1;
@@ -123,7 +123,7 @@ async function initCloud(){
       await refreshAdminStatus();
       if(state.user) await loadUserProfile();
       if(state.user) await syncFromCloud();
-      else {state.isAdmin=false;state.games=[];state.wagers=[];state.cautionGameIds=[];}
+      else {state.isAdmin=false;state.games=[];state.wagers=[];state.cautionGameIds=[];state.oddsHistory=[];}
       render();
     });
     if(state.user) await syncFromCloud();
@@ -146,12 +146,56 @@ async function syncFromCloud(){
     state.games=(gamesRes.data||[]).map(fromDbGame);
     state.wagers=(wagersRes.data||[]).map(fromDbWager);
     state.cautionGameIds=(flagsRes.data||[]).map(r=>r.game_id);
+    const historyRes=await state.sb.from('game_odds_history').select('*').eq('season',2026).gte('week',4).lte('week',12).order('captured_at',{ascending:true});
+    state.oddsHistory=historyRes.error?[]:(historyRes.data||[]).map(fromDbOddsSnapshot);
   }catch(err){ state.importMessage=`Sync failed: ${err.message||err}`; }
   finally{ state.syncing=false; }
 }
 
 function fromDbGame(r){ return {id:r.id,sourceEventId:r.source_event_id,sourceSportKey:r.source_sport_key,week:r.week,away:r.away,home:r.home,spreadTeam:r.spread_team,spread:r.spread==null?null:Number(r.spread),total:r.total==null?null:Number(r.total),commenceTime:r.commence_time,marketUpdatedAt:r.market_updated_at,tv:r.tv||'',location:r.location||''}; }
 function toDbGame(g){ return {id:g.id,source_event_id:g.sourceEventId||null,source_sport_key:g.sourceSportKey||null,season:2026,week:g.week,away:g.away,home:g.home,spread_team:g.spreadTeam||null,spread:g.spread,total:g.total,commence_time:g.commenceTime,market_updated_at:g.marketUpdatedAt||null,tv:g.tv||'',location:g.location||'',updated_at:new Date().toISOString()}; }
+function fromDbOddsSnapshot(r){ return {id:r.id,gameId:r.game_id,week:r.week,spreadTeam:r.spread_team,spread:r.spread==null?null:Number(r.spread),total:r.total==null?null:Number(r.total),marketUpdatedAt:r.market_updated_at,capturedAt:r.captured_at}; }
+function toDbOddsSnapshot(g,capturedAt){ return {game_id:g.id,season:2026,week:g.week,spread_team:g.spreadTeam||null,spread:g.spread,total:g.total,market_updated_at:g.marketUpdatedAt||null,captured_at:capturedAt}; }
+function oddsHistoryForGame(gameId){ return state.oddsHistory.filter(h=>h.gameId===gameId).sort((a,b)=>new Date(a.capturedAt)-new Date(b.capturedAt)); }
+function spreadForTeamFromSnapshot(h,team){ if(h?.spread==null||!h.spreadTeam)return null; return h.spreadTeam===team?h.spread:-h.spread; }
+function movementForGame(g){
+  const history=oddsHistoryForGame(g.id);
+  if(!history.length)return null;
+  const first=history[0];
+  const firstHome=spreadForTeamFromSnapshot(first,g.home), currentHome=fmtSpread(g,g.home);
+  const spreadMove=firstHome!=null&&currentHome!=null?currentHome-firstHome:null;
+  const totalMove=first.total!=null&&g.total!=null?g.total-first.total:null;
+  if((spreadMove==null||Math.abs(spreadMove)<0.001)&&(totalMove==null||Math.abs(totalMove)<0.001))return {history,first,spreadMove,totalMove,moved:false};
+  return {history,first,spreadMove,totalMove,moved:true};
+}
+function movementSummary(g){
+  const m=movementForGame(g);
+  if(!m?.moved)return'';
+  const bits=[];
+  if(m.spreadMove!=null&&Math.abs(m.spreadMove)>=0.001){
+    const firstHome=spreadForTeamFromSnapshot(m.first,g.home), currentHome=fmtSpread(g,g.home);
+    bits.push(`${g.home} ${signed(firstHome)} → ${signed(currentHome)}`);
+  }
+  if(m.totalMove!=null&&Math.abs(m.totalMove)>=0.001) bits.push(`O/U ${m.first.total} → ${g.total}`);
+  return bits.join(' · ');
+}
+function compactOddsHistory(g){
+  const rows=oddsHistoryForGame(g.id);
+  const compact=[];
+  rows.forEach(h=>{
+    const homeSpread=spreadForTeamFromSnapshot(h,g.home);
+    const key=`${homeSpread??''}|${h.total??''}`;
+    if(!compact.length||compact[compact.length-1].key!==key) compact.push({...h,homeSpread,key});
+  });
+  const currentHome=fmtSpread(g,g.home), currentKey=`${currentHome??''}|${g.total??''}`;
+  if(!compact.length||compact[compact.length-1].key!==currentKey) compact.push({capturedAt:g.marketUpdatedAt||new Date().toISOString(),homeSpread:currentHome,total:g.total,key:currentKey});
+  return compact;
+}
+function renderMovementHistory(g){
+  const rows=compactOddsHistory(g);
+  if(rows.length<2)return '<div class="movement-empty">No line movement captured yet.</div>';
+  return `<div class="movement-history">${rows.slice(-6).map((h,i,arr)=>{const when=formatKickoff(h.capturedAt);const label=rows.length>6&&i===0?'Earlier':(i===arr.length-1?'Current':`${when.date} · ${when.time}`);const spread=h.homeSpread==null?'—':`${g.home} ${signed(h.homeSpread)}`;const total=h.total==null?'—':`O/U ${h.total}`;return `<div class="movement-row"><span>${label}</span><strong>${spread}</strong><strong>${total}</strong></div>`;}).join('')}</div>`;
+}
 function fromDbWager(r){ return {id:r.id,gameId:r.game_id,betType:r.bet_type,selection:r.selection,line:Number(r.line),units:Number(r.units),who:r.who,pick:r.pick,result:r.result||'Pending',marketSpread:r.market_spread==null?null:Number(r.market_spread),marketTotal:r.market_total==null?null:Number(r.market_total)}; }
 function toDbWager(w){ return {id:w.id,user_id:state.user.id,game_id:w.gameId,bet_type:w.betType,selection:w.selection,line:w.line,units:w.units,who:w.who,pick:w.pick,result:w.result||'Pending',market_spread:w.marketSpread,market_total:w.marketTotal,updated_at:new Date().toISOString()}; }
 
@@ -290,10 +334,11 @@ function renderMarket(){
         message=state.importMessage?`<div class="notice">${state.importMessage}</div>`:'';
   if(!games.length)return `${message}<div class="empty"><strong>No games loaded for Week ${state.selectedWeek}.</strong><br><br>${state.isAdmin?'Tap <b>Load Week</b> to pull the current DraftKings slate.':'The weekly board has not been published yet.'}</div>`;
   return `${message}<div class="game-list">${games.map(g=>{
-    const saved=wagersForGame(g.id).length,k=formatKickoff(g.commenceTime),caution=isCautioned(g.id);
+    const saved=wagersForGame(g.id).length,k=formatKickoff(g.commenceTime),caution=isCautioned(g.id),movement=movementSummary(g);
     return `<button class="game-row ${saved?'saved':''} ${caution?'cautioned':''}" data-game="${g.id}">
       <div class="game-matchup">${caution?'<span class="caution-icon">⚠️</span> ':''}${g.away} @ ${g.home}</div>
       <div class="game-market">${marketSummary(g)}</div>
+      ${movement?`<div class="line-movement">↔ ${movement}</div>`:''}
       <div class="game-kickoff">${k.date} · ${k.time}</div>
       ${saved?`<span class="badge">${saved} saved</span>`:''}
       ${(!hasSpread(g)||!hasTotal(g))?'<span class="warning-badge">Missing market</span>':''}
@@ -363,7 +408,7 @@ function renderPickerSelector(){
   </div>`;
 }
 
-function renderGameSheet(){ const g=gameById(state.activeGameId);if(!g)return'';const editing=state.editWagerId?state.wagers.find(w=>w.id===state.editWagerId):null;const defaultWho=tempWho||editing?.who||state.displayName||'';let kind=editing?.betType||(hasSpread(g)?'Spread':'Total');if(kind==='Spread'&&!hasSpread(g))kind='Total';if(kind==='Total'&&!hasTotal(g))kind='Spread';const selection=editing?.selection||(kind==='Spread'?g.spreadTeam:'Over');tempKind=kind;tempSelection=selection;const actualLineValue=editing?(tempLine!==''?tempLine:editing.line):tempLine;const k=formatKickoff(g.commenceTime);return `<div class="overlay"><section class="sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${g.away} @ ${g.home}</h2><div class="detail-meta">${k.date} · ${k.time}${g.tv?`<br>${g.tv}`:''}${g.location?` · ${g.location}`:''}</div></div><button class="icon-btn" data-close>✕</button></div><div class="market-box"><strong>DraftKings market snapshot</strong>${marketSummary(g)}${g.marketUpdatedAt?`<div class="market-updated">Updated ${formatKickoff(g.marketUpdatedAt).date} · ${formatKickoff(g.marketUpdatedAt).time}</div>`:''}</div><div class="wager-editor"><div class="section-title">${editing?'Edit wager':'Add wager'}</div><div class="bet-type-grid"><button class="choice-btn ${kind==='Spread'?'selected':''}" data-kind="Spread" ${hasSpread(g)?'':'disabled'}>Spread</button><button class="choice-btn ${kind==='Total'?'selected':''}" data-kind="Total" ${hasTotal(g)?'':'disabled'}>Total</button></div><div id="choiceArea">${renderChoiceArea(g,kind,selection)}</div><div class="field-grid"><div class="field"><label>Actual line taken</label><input id="lineInput" type="number" step="0.5" value="${actualLineValue}" placeholder="Optional — defaults to market"></div><div class="field"><label>Units</label><input id="unitsInput" type="number" min="0.1" step="0.5" value="${editing?(tempUnits??editing.units):(tempUnits??1)}"></div><div class="field full"><label>Who’s picks are these?</label><button type="button" class="picker-select-btn" data-open-picker-selector><span id="pickerSelectionLabel">${escapeAttr(defaultWho)}</span><span class="chev">›</span></button><input id="whoInput" type="hidden" value="${escapeAttr(defaultWho)}"></div></div><button type="button" class="caution-toggle ${isCautioned(g.id)?'active':''}" data-toggle-caution="${g.id}">${isCautioned(g.id)?'⚠️ Caution Marked':'⚠️ Mark Caution'}</button><button class="primary ${state.saving?'saved-confirmation':''}" data-save-wager ${state.saving?'disabled':''}>${state.saving?'✓ Saved':(editing?'Save Changes':'Confirm Bet')}</button></div></section></div>`; }
+function renderGameSheet(){ const g=gameById(state.activeGameId);if(!g)return'';const editing=state.editWagerId?state.wagers.find(w=>w.id===state.editWagerId):null;const defaultWho=tempWho||editing?.who||state.displayName||'';let kind=editing?.betType||(hasSpread(g)?'Spread':'Total');if(kind==='Spread'&&!hasSpread(g))kind='Total';if(kind==='Total'&&!hasTotal(g))kind='Spread';const selection=editing?.selection||(kind==='Spread'?g.spreadTeam:'Over');tempKind=kind;tempSelection=selection;const actualLineValue=editing?(tempLine!==''?tempLine:editing.line):tempLine;const k=formatKickoff(g.commenceTime);return `<div class="overlay"><section class="sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${g.away} @ ${g.home}</h2><div class="detail-meta">${k.date} · ${k.time}${g.tv?`<br>${g.tv}`:''}${g.location?` · ${g.location}`:''}</div></div><button class="icon-btn" data-close>✕</button></div><div class="market-box"><strong>DraftKings market snapshot</strong>${marketSummary(g)}${g.marketUpdatedAt?`<div class="market-updated">Updated ${formatKickoff(g.marketUpdatedAt).date} · ${formatKickoff(g.marketUpdatedAt).time}</div>`:''}<div class="movement-title">Line movement</div>${renderMovementHistory(g)}</div><div class="wager-editor"><div class="section-title">${editing?'Edit wager':'Add wager'}</div><div class="bet-type-grid"><button class="choice-btn ${kind==='Spread'?'selected':''}" data-kind="Spread" ${hasSpread(g)?'':'disabled'}>Spread</button><button class="choice-btn ${kind==='Total'?'selected':''}" data-kind="Total" ${hasTotal(g)?'':'disabled'}>Total</button></div><div id="choiceArea">${renderChoiceArea(g,kind,selection)}</div><div class="field-grid"><div class="field"><label>Actual line taken</label><input id="lineInput" type="number" step="0.5" value="${actualLineValue}" placeholder="Optional — defaults to market"></div><div class="field"><label>Units</label><input id="unitsInput" type="number" min="0.1" step="0.5" value="${editing?(tempUnits??editing.units):(tempUnits??1)}"></div><div class="field full"><label>Who’s picks are these?</label><button type="button" class="picker-select-btn" data-open-picker-selector><span id="pickerSelectionLabel">${escapeAttr(defaultWho)}</span><span class="chev">›</span></button><input id="whoInput" type="hidden" value="${escapeAttr(defaultWho)}"></div></div><button type="button" class="caution-toggle ${isCautioned(g.id)?'active':''}" data-toggle-caution="${g.id}">${isCautioned(g.id)?'⚠️ Caution Marked':'⚠️ Mark Caution'}</button><button class="primary ${state.saving?'saved-confirmation':''}" data-save-wager ${state.saving?'disabled':''}>${state.saving?'✓ Saved':(editing?'Save Changes':'Confirm Bet')}</button></div></section></div>`; }
 function renderSettingsSheet(){
   const adminApiSection = state.isAdmin ? `
     <div class="security-note">
@@ -629,6 +674,14 @@ async function loadSelectedWeek(){
 
     const {error:upsertError}=await state.sb.from('games').upsert(parsed.map(toDbGame));
     if(upsertError)throw upsertError;
+
+    const capturedAt=new Date().toISOString();
+    const historyRows=parsed.filter(g=>hasSpread(g)||hasTotal(g)).map(g=>toDbOddsSnapshot(g,capturedAt));
+    if(historyRows.length){
+      const {data:historyData,error:historyError}=await state.sb.from('game_odds_history').insert(historyRows).select('*');
+      if(!historyError) state.oddsHistory=state.oddsHistory.concat((historyData||[]).map(fromDbOddsSnapshot));
+      else console.warn('Odds history snapshot was not saved:',historyError.message);
+    }
 
     const existing=state.games.filter(g=>g.week!==state.selectedWeek);
     state.games=existing.concat(parsed);
