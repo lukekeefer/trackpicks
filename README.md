@@ -1,0 +1,124 @@
+# CFB Weekly V3.0 — Login + Cloud Sync
+
+This version adds Supabase authentication and persistent cloud storage while preserving the V2.1 workflow.
+
+## What is cloud-synced
+- Weekly game boards: shared by authenticated users.
+- Wagers/Slip: private to the signed-in account.
+- Actual line taken, units, Who, Pick and Result all sync.
+- Same login can be used on phone and desktop.
+
+## One-time Supabase setup
+1. Create a Supabase project.
+2. Open the SQL Editor in Supabase.
+3. Paste and run the entire `SUPABASE_SETUP.sql` file from this package.
+4. In Supabase project settings/API, copy:
+   - Project URL
+   - public anon/publishable key
+5. Deploy this folder to Netlify.
+6. Open the app. On the Cloud Setup screen, paste those two public project values.
+7. Create your first account or log in.
+8. In Settings, paste your existing The Odds API key on each device that needs to run `Load Week`.
+
+## Important prototype note
+The Odds API key remains in browser local storage in V3.0. Supabase login/picks are cloud-backed, but the Odds API key should be moved to a serverless function before this is distributed beyond a trusted private group.
+
+## Auth email confirmation
+Supabase projects may require email confirmation for new users. If enabled, a new account must confirm its email before it can log in. This can be adjusted in Supabase Auth settings if desired.
+
+## Export
+CSV remains:
+Matchup, Bet Type, Line/Total, Who, Pick, Result
+
+Units remain cloud-stored but are not exported yet.
+
+
+## V3.1 — Admin-only weekly board
+1. Run `SUPABASE_ADMIN_UPDATE.sql` in Supabase SQL Editor.
+2. Then run the final `update public.profiles...` statement with your login email.
+3. Log out and back in.
+
+Behavior:
+- Admins see `Load Week`.
+- Normal users do not see `Load Week`.
+- Database rules also block non-admin users from changing the shared board.
+- Wagers remain private to each signed-in user.
+
+
+## V3.3 — Safe admin UI fix
+This build starts from the known-working V3.1 auth/cloud code and makes only the admin-role changes.
+
+- Cloud Setup and Login bindings are preserved unchanged.
+- Admin status uses `state.sb` and `state.user`.
+- Role is refreshed when the session loads and whenever auth state changes.
+- Only admins render `Load Week`.
+- Non-admin users see a neutral 'board not published yet' message when a week is empty.
+- `loadSelectedWeek()` also checks the admin role before importing.
+- Supabase RLS remains the authoritative security layer.
+
+
+## V3.4.1 — Permanent cloud config, safe rebuild
+- Rebuilt from the known-working V3.3 source.
+- Supabase Project URL and publishable key are embedded in the app.
+- Cloud Setup controls are hidden.
+- The original working auth/startup code is preserved intact.
+- New devices should open directly to Login/Create Account.
+- Admin/user behavior is unchanged.
+- Odds API key remains device-local for now.
+
+
+## V3.5 — Admin API key settings
+- Adds an admin-only Odds API Key field in Settings.
+- Regular users do not see the field.
+- Admin can save or clear the key.
+- The key is stored in browser localStorage on that device.
+- Load Week automatically uses the saved key.
+- Future improvement: move the key to a server-side secret so it syncs across admin devices without exposing it in browser storage.
+
+
+## V3.5.1 — Admin API visibility fix
+- Removes the old Odds API field that was visible to every user.
+- Only admin accounts can see or edit the Odds API key.
+- Regular-user Settings now show only cloud sync and logout controls.
+
+
+## V3.6.1 — Safe Slip/result rebuild
+- Rebuilt from stable V3.5.1.
+- Preserves the Full Slate game-detail renderer and all game selection behavior.
+- Renames Market to Full Slate.
+- Makes Slip cards more compact.
+- Adds Set Result / Edit Result flow with Win, Loss, Push.
+- Saving a result shows the green ✓ Saved confirmation before the badge settles.
+
+
+## V3.7 — Display Name + custom picker names
+
+Before deploying:
+1. Run `SUPABASE_PROFILE_NAMES_UPDATE.sql` in Supabase SQL Editor.
+2. Deploy the V3.7 folder to Netlify.
+
+Behavior:
+- First login without a Display Name prompts: “What should we call you?”
+- Display Name becomes the default on new wagers.
+- Display Name is editable in Settings.
+- Game screen now says “Who’s picks are these?”
+- Tapping it opens a quick selector:
+  - Display Name first
+  - added names in creation order
+  - + Add Name always last
+- Added names are saved to the signed-in user’s profile and sync across devices.
+- Existing historical wager labels are not rewritten when Display Name changes.
+
+
+## V3.7.2 — Surgical picker fix
+- Built directly from the original V3.7 source.
+- Fixes `defaultWho` without replacing any app functions.
+- Preserves Settings, Full Slate, Slip, login, cloud sync, and admin controls.
+- Custom picker-name selections persist while the game screen re-renders.
+
+
+## V3.7.3 — Picker menu render fix
+- Fixes “Who’s picks are these?” not opening.
+- The selector sheet is now included in the main app render.
+- Display Name, saved names, and + Add Name now appear in the intended popup.
+- No other workflow logic was changed.
