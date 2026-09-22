@@ -34,9 +34,23 @@ const state = {
   games: [], wagers: [], cautionGameIds: [],
   pickerOptions: ['Keef','Wilson','Both','Tail']
 };
-let tempKind='Spread', tempSelection=null, tempWho=null;
+let tempKind='Spread', tempSelection=null, tempWho=null, tempLine='', tempUnits=1;
 
 function signed(n){ return Number(n)>0?`+${Number(n)}`:`${Number(n)}`; }
+
+function captureWagerDraft(){
+  const line=document.getElementById('lineInput');
+  const units=document.getElementById('unitsInput');
+  const who=document.getElementById('whoInput');
+  if(line) tempLine=line.value;
+  if(units) tempUnits=units.value;
+  if(who && who.value) tempWho=who.value;
+}
+function resetWagerDraft(){
+  tempLine='';
+  tempUnits=1;
+}
+
 function escapeAttr(s){ return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function gameById(id){ return state.games.find(g=>g.id===id); }
 function wagersForGame(id){ return state.wagers.filter(w=>w.gameId===id); }
@@ -349,7 +363,7 @@ function renderPickerSelector(){
   </div>`;
 }
 
-function renderGameSheet(){ const g=gameById(state.activeGameId);if(!g)return'';const editing=state.editWagerId?state.wagers.find(w=>w.id===state.editWagerId):null;const defaultWho=tempWho||editing?.who||state.displayName||'';let kind=editing?.betType||(hasSpread(g)?'Spread':'Total');if(kind==='Spread'&&!hasSpread(g))kind='Total';if(kind==='Total'&&!hasTotal(g))kind='Spread';const selection=editing?.selection||(kind==='Spread'?g.spreadTeam:'Over');tempKind=kind;tempSelection=selection;const actualLineValue=editing?editing.line:'';const k=formatKickoff(g.commenceTime);return `<div class="overlay"><section class="sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${g.away} @ ${g.home}</h2><div class="detail-meta">${k.date} · ${k.time}${g.tv?`<br>${g.tv}`:''}${g.location?` · ${g.location}`:''}</div></div><button class="icon-btn" data-close>✕</button></div><div class="market-box"><strong>DraftKings market snapshot</strong>${marketSummary(g)}${g.marketUpdatedAt?`<div class="market-updated">Updated ${formatKickoff(g.marketUpdatedAt).date} · ${formatKickoff(g.marketUpdatedAt).time}</div>`:''}</div><div class="wager-editor"><div class="section-title">${editing?'Edit wager':'Add wager'}</div><div class="bet-type-grid"><button class="choice-btn ${kind==='Spread'?'selected':''}" data-kind="Spread" ${hasSpread(g)?'':'disabled'}>Spread</button><button class="choice-btn ${kind==='Total'?'selected':''}" data-kind="Total" ${hasTotal(g)?'':'disabled'}>Total</button></div><div id="choiceArea">${renderChoiceArea(g,kind,selection)}</div><div class="field-grid"><div class="field"><label>Actual line taken</label><input id="lineInput" type="number" step="0.5" value="${actualLineValue}" placeholder="Optional — defaults to market"></div><div class="field"><label>Units</label><input id="unitsInput" type="number" min="0.1" step="0.5" value="${editing?.units??1}"></div><div class="field full"><label>Who’s picks are these?</label><button type="button" class="picker-select-btn" data-open-picker-selector><span id="pickerSelectionLabel">${escapeAttr(defaultWho)}</span><span class="chev">›</span></button><input id="whoInput" type="hidden" value="${escapeAttr(defaultWho)}"></div></div><button type="button" class="caution-toggle ${isCautioned(g.id)?'active':''}" data-toggle-caution="${g.id}">${isCautioned(g.id)?'⚠️ Caution Marked':'⚠️ Mark Caution'}</button><button class="primary ${state.saving?'saved-confirmation':''}" data-save-wager ${state.saving?'disabled':''}>${state.saving?'✓ Saved':(editing?'Save Changes':'Confirm Bet')}</button></div></section></div>`; }
+function renderGameSheet(){ const g=gameById(state.activeGameId);if(!g)return'';const editing=state.editWagerId?state.wagers.find(w=>w.id===state.editWagerId):null;const defaultWho=tempWho||editing?.who||state.displayName||'';let kind=editing?.betType||(hasSpread(g)?'Spread':'Total');if(kind==='Spread'&&!hasSpread(g))kind='Total';if(kind==='Total'&&!hasTotal(g))kind='Spread';const selection=editing?.selection||(kind==='Spread'?g.spreadTeam:'Over');tempKind=kind;tempSelection=selection;const actualLineValue=editing?(tempLine!==''?tempLine:editing.line):tempLine;const k=formatKickoff(g.commenceTime);return `<div class="overlay"><section class="sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${g.away} @ ${g.home}</h2><div class="detail-meta">${k.date} · ${k.time}${g.tv?`<br>${g.tv}`:''}${g.location?` · ${g.location}`:''}</div></div><button class="icon-btn" data-close>✕</button></div><div class="market-box"><strong>DraftKings market snapshot</strong>${marketSummary(g)}${g.marketUpdatedAt?`<div class="market-updated">Updated ${formatKickoff(g.marketUpdatedAt).date} · ${formatKickoff(g.marketUpdatedAt).time}</div>`:''}</div><div class="wager-editor"><div class="section-title">${editing?'Edit wager':'Add wager'}</div><div class="bet-type-grid"><button class="choice-btn ${kind==='Spread'?'selected':''}" data-kind="Spread" ${hasSpread(g)?'':'disabled'}>Spread</button><button class="choice-btn ${kind==='Total'?'selected':''}" data-kind="Total" ${hasTotal(g)?'':'disabled'}>Total</button></div><div id="choiceArea">${renderChoiceArea(g,kind,selection)}</div><div class="field-grid"><div class="field"><label>Actual line taken</label><input id="lineInput" type="number" step="0.5" value="${actualLineValue}" placeholder="Optional — defaults to market"></div><div class="field"><label>Units</label><input id="unitsInput" type="number" min="0.1" step="0.5" value="${editing?(tempUnits??editing.units):(tempUnits??1)}"></div><div class="field full"><label>Who’s picks are these?</label><button type="button" class="picker-select-btn" data-open-picker-selector><span id="pickerSelectionLabel">${escapeAttr(defaultWho)}</span><span class="chev">›</span></button><input id="whoInput" type="hidden" value="${escapeAttr(defaultWho)}"></div></div><button type="button" class="caution-toggle ${isCautioned(g.id)?'active':''}" data-toggle-caution="${g.id}">${isCautioned(g.id)?'⚠️ Caution Marked':'⚠️ Mark Caution'}</button><button class="primary ${state.saving?'saved-confirmation':''}" data-save-wager ${state.saving?'disabled':''}>${state.saving?'✓ Saved':(editing?'Save Changes':'Confirm Bet')}</button></div></section></div>`; }
 function renderSettingsSheet(){
   const adminApiSection = state.isAdmin ? `
     <div class="security-note">
@@ -454,17 +468,18 @@ function bind(){
   });
   document.querySelectorAll('[data-signout]').forEach(el=>el.onclick=async()=>{await state.sb.auth.signOut();state.showSettings=false;});
   document.querySelectorAll('[data-load-week]').forEach(el=>el.onclick=loadSelectedWeek);
-  document.querySelectorAll('[data-game],[data-open-game]').forEach(el=>el.onclick=()=>{state.activeGameId=el.dataset.game||el.dataset.openGame;state.editWagerId=null;tempWho=null;state.saving=false;const g=gameById(state.activeGameId);tempKind=hasSpread(g)?'Spread':'Total';tempSelection=tempKind==='Spread'?g.spreadTeam:'Over';render();});
-  document.querySelectorAll('[data-close]').forEach(el=>el.onclick=()=>{state.activeGameId=null;state.editWagerId=null;tempWho=null;state.saving=false;render();});
+  document.querySelectorAll('[data-game],[data-open-game]').forEach(el=>el.onclick=()=>{state.activeGameId=el.dataset.game||el.dataset.openGame;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;const g=gameById(state.activeGameId);tempKind=hasSpread(g)?'Spread':'Total';tempSelection=tempKind==='Spread'?g.spreadTeam:'Over';render();});
+  document.querySelectorAll('[data-close]').forEach(el=>el.onclick=()=>{state.activeGameId=null;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
   document.querySelectorAll('[data-kind]').forEach(el=>el.onclick=()=>{if(el.disabled)return;tempKind=el.dataset.kind;const g=gameById(state.activeGameId);tempSelection=tempKind==='Spread'?g.spreadTeam:'Over';document.querySelectorAll('[data-kind]').forEach(b=>b.classList.toggle('selected',b.dataset.kind===tempKind));document.getElementById('choiceArea').innerHTML=renderChoiceArea(g,tempKind,tempSelection);bindDynamicSelections();});
   bindDynamicSelections();
   document.querySelectorAll('[data-save-wager]').forEach(el=>el.onclick=saveCurrentWager);
-  document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>{const w=state.wagers.find(x=>x.id===el.dataset.edit);if(!w||!gameById(w.gameId))return;state.activeGameId=w.gameId;state.editWagerId=w.id;tempWho=w.who||state.displayName;state.saving=false;tempKind=w.betType;tempSelection=w.selection;render();});
+  document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>{const w=state.wagers.find(x=>x.id===el.dataset.edit);if(!w||!gameById(w.gameId))return;state.activeGameId=w.gameId;state.editWagerId=w.id;tempWho=w.who||state.displayName;tempLine=String(w.line??'');tempUnits=String(w.units??1);state.saving=false;tempKind=w.betType;tempSelection=w.selection;render();});
   document.querySelectorAll('[data-remove]').forEach(el=>el.onclick=()=>removeWager(el.dataset.remove));
   document.querySelectorAll('[data-result-menu]').forEach(el=>el.onclick=()=>{const id=el.dataset.resultMenu;document.querySelectorAll('[data-result-picker-for]').forEach(p=>{p.hidden=p.dataset.resultPickerFor!==id?true:!p.hidden;});});
   document.querySelectorAll('[data-set-result]').forEach(el=>el.onclick=async()=>{const id=el.dataset.setResult,result=el.dataset.result;const {error}=await state.sb.from('wagers').update({result,updated_at:new Date().toISOString()}).eq('id',id).eq('user_id',state.user.id);if(error){alert(`Could not update result: ${error.message}`);return;}const w=state.wagers.find(x=>x.id===id);if(w)w.result=result;const card=el.closest('.slip-card');const picker=card?.querySelector('.result-picker');if(picker)picker.hidden=true;const badge=card?.querySelector('.result-badge');if(badge){badge.className='result-badge result-saved';badge.textContent='✓ Saved';}const menuBtn=card?.querySelector('[data-result-menu]');if(menuBtn)menuBtn.textContent='Edit Result';setTimeout(()=>render(),1600);});
 
   document.querySelectorAll('[data-toggle-caution]').forEach(el=>el.onclick=async()=>{
+    captureWagerDraft();
     const gameId=el.dataset.toggleCaution;
     if(isCautioned(gameId)){
       const {error}=await state.sb.from('user_game_flags').delete().eq('user_id',state.user.id).eq('game_id',gameId);
@@ -497,18 +512,21 @@ function bind(){
   });
 
   document.querySelectorAll('[data-open-picker-selector]').forEach(el=>el.onclick=()=>{
+    captureWagerDraft();
     state.activePickerSelector=true;
     state.activeAddName=false;
     render();
   });
 
   document.querySelectorAll('[data-close-picker-selector]').forEach(el=>el.onclick=()=>{
+    captureWagerDraft();
     state.activePickerSelector=false;
     state.activeAddName=false;
     render();
   });
 
   document.querySelectorAll('[data-picker-name]').forEach(el=>el.onclick=()=>{
+    captureWagerDraft();
     const name=el.dataset.pickerName;
     tempWho=name;
     state.activePickerSelector=false;
@@ -524,11 +542,13 @@ function bind(){
   });
 
   document.querySelectorAll('[data-add-picker-name]').forEach(el=>el.onclick=()=>{
+    captureWagerDraft();
     state.activeAddName=true;
     render();
   });
 
   document.querySelectorAll('[data-save-picker-name]').forEach(el=>el.onclick=async()=>{
+    captureWagerDraft();
     const input=document.getElementById('newPickerNameInput');
     const result=await addPickerName(input?.value||'');
     if(!result.ok){alert(result.message);return;}
@@ -549,7 +569,7 @@ function bind(){
 }
 
 async function saveCurrentWager(){
-  if(state.saving)return;const g=gameById(state.activeGameId),editing=state.editWagerId?state.wagers.find(w=>w.id===state.editWagerId):null,rawLine=document.getElementById('lineInput').value.trim(),units=Number(document.getElementById('unitsInput').value||1),who=(tempWho||document.getElementById('whoInput').value||state.displayName);if(!tempSelection)tempSelection=tempKind==='Spread'?g.spreadTeam:'Over';const marketLine=marketLineFor(g,tempKind,tempSelection);if(marketLine==null){alert('The selected DraftKings market is unavailable for this game.');return;}const finalLine=rawLine===''?marketLine:Number(rawLine);if(Number.isNaN(finalLine)){alert('Enter a valid spread or total, or leave the field blank to use the market line.');return;}if(!Number.isFinite(units)||units<=0){alert('Enter a valid unit amount greater than 0.');return;}const pick=tempKind==='Spread'?`${tempSelection} ${signed(finalLine)}`:`${tempSelection} ${finalLine}`;const obj={id:state.editWagerId||crypto.randomUUID(),gameId:g.id,betType:tempKind,selection:tempSelection,line:finalLine,units,who,pick,result:editing?.result||'Pending',marketSpread:g.spread,marketTotal:g.total};state.saving=true;render();const {error}=await state.sb.from('wagers').upsert(toDbWager(obj));if(error){state.saving=false;alert(`Could not save pick: ${error.message}`);render();return;}if(editing){state.wagers[state.wagers.findIndex(w=>w.id===obj.id)]=obj;}else state.wagers.push(obj);render();setTimeout(()=>{state.activeGameId=null;state.editWagerId=null;tempWho=null;state.saving=false;render();},2200);
+  if(state.saving)return;captureWagerDraft();const g=gameById(state.activeGameId),editing=state.editWagerId?state.wagers.find(w=>w.id===state.editWagerId):null,rawLine=String(tempLine??'').trim(),units=Number(tempUnits||1),who=(tempWho||document.getElementById('whoInput').value||state.displayName);if(!tempSelection)tempSelection=tempKind==='Spread'?g.spreadTeam:'Over';const marketLine=marketLineFor(g,tempKind,tempSelection);if(marketLine==null){alert('The selected DraftKings market is unavailable for this game.');return;}const finalLine=rawLine===''?marketLine:Number(rawLine);if(Number.isNaN(finalLine)){alert('Enter a valid spread or total, or leave the field blank to use the market line.');return;}if(!Number.isFinite(units)||units<=0){alert('Enter a valid unit amount greater than 0.');return;}const pick=tempKind==='Spread'?`${tempSelection} ${signed(finalLine)}`:`${tempSelection} ${finalLine}`;const obj={id:state.editWagerId||crypto.randomUUID(),gameId:g.id,betType:tempKind,selection:tempSelection,line:finalLine,units,who,pick,result:editing?.result||'Pending',marketSpread:g.spread,marketTotal:g.total};state.saving=true;render();const {error}=await state.sb.from('wagers').upsert(toDbWager(obj));if(error){state.saving=false;alert(`Could not save pick: ${error.message}`);render();return;}if(editing){state.wagers[state.wagers.findIndex(w=>w.id===obj.id)]=obj;}else state.wagers.push(obj);render();setTimeout(()=>{state.activeGameId=null;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;render();},2200);
 }
 async function removeWager(id){ const {error}=await state.sb.from('wagers').delete().eq('id',id).eq('user_id',state.user.id);if(error){alert(`Could not remove pick: ${error.message}`);return;}state.wagers=state.wagers.filter(w=>w.id!==id);if(state.editWagerId===id)state.editWagerId=null;render(); }
 async function setResult(id,result){ const {error}=await state.sb.from('wagers').update({result,updated_at:new Date().toISOString()}).eq('id',id).eq('user_id',state.user.id);if(error){alert(`Could not update result: ${error.message}`);return;}const w=state.wagers.find(x=>x.id===id);if(w)w.result=result;render(); }
