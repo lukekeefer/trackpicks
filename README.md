@@ -168,3 +168,7 @@ For each future deploy:
 Open browser tabs and installed home-screen users check `version.json` when the app opens, when it returns to the foreground, and every five minutes. If a newer build exists, TrackPicks shows an update banner. Tapping Reload adds the new version to the page URL so the browser requests a fresh `index.html`, which then loads the new versioned assets.
 
 Do not add aggressive service-worker caching unless deliberately redesigned; TrackPicks depends on live Supabase data and favors predictable updates over offline caching.
+
+
+## Line history charts
+Single-game market info includes **Spread History** and **Total History** buttons when at least two snapshots exist. Charts use `game_odds_history` and normalize spreads to the home-team line. The first captured TrackPicks line is a baseline, not a claimed sportsbook opener.
