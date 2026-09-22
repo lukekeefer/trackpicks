@@ -1,5 +1,6 @@
 const STORAGE = {
   apiKey: 'cfb-odds-api-key-v3',
+  apiUsage: 'trackpicks-odds-api-usage',
   supabaseUrl: 'cfb-supabase-url-v3',
   supabaseKey: 'cfb-supabase-key-v3'
 };
@@ -24,6 +25,7 @@ const state = {
   saving: false, loadingWeek: false, syncing: false, showSettings: false,
   importMessage: '', authMessage: '', authMode: 'signin',
   apiKey: localStorage.getItem(STORAGE.apiKey) || '',
+  apiUsage: JSON.parse(localStorage.getItem(STORAGE.apiUsage) || 'null'),
   supabaseUrl: 'https://doatdvdaggmuycgxkwhh.supabase.co',
   supabaseKey: 'sb_publishable_sxuPFdJVj5xQF7iIPs2FzQ_k1alR7Zy',
   sb: null, session: null, user: null,
@@ -47,6 +49,15 @@ function hasTotal(g){ return g?.total!=null; }
 function formatKickoff(iso){ if(!iso)return{date:'Time TBD',time:''}; const d=new Date(iso); return {date:new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric'}).format(d),time:new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(d)}; }
 function formatWeekRange(week){ const win=WEEK_WINDOWS[week]; if(!win)return''; const a=new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(new Date(win.start)); const b=new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(new Date(win.end)); return `${a}–${b}`; }
 function marketSummary(g){ const s=hasSpread(g)?`${g.spreadTeam} ${signed(g.spread)}`:'Spread unavailable'; const t=hasTotal(g)?`O/U ${g.total}`:'O/U unavailable'; return `${s} · ${t}`; }
+
+function apiUsageSummary(){
+  const u=state.apiUsage;
+  if(!u || !Number.isFinite(u.used) || !Number.isFinite(u.remaining)) return 'Usage will appear after the next Load Week.';
+  const total=u.used+u.remaining;
+  const cost=Number.isFinite(u.lastPullCost)?u.lastPullCost:null;
+  return `${u.used} / ${total} credits used · ${u.remaining} remaining${cost!=null?` · Last Load Week: ${cost} credits`:''}`;
+}
+
 function cloudConfigured(){ return true; }
 
 async function initCloud(){
@@ -263,6 +274,11 @@ function renderSettingsSheet(){
       <input id="adminApiKeyInput" type="password" value="${escapeAttr(state.apiKey)}" placeholder="Paste your API key">
     </div>
     <button class="primary" data-save-admin-api>Save API Key</button>
+    <div class="api-usage-card">
+      <div class="api-usage-label">Odds API Usage</div>
+      <div class="api-usage-value">${apiUsageSummary()}</div>
+      <div class="api-usage-note">Monthly usage reported directly by The Odds API.</div>
+    </div>
     <hr class="settings-divider">
   ` : '';
 
@@ -410,9 +426,113 @@ async function setResult(id,result){ const {error}=await state.sb.from('wagers')
 
 async function loadSelectedWeek(){
   if(!state.isAdmin){alert('Only the admin account can load or refresh the weekly board.');return;}
-  if(!state.apiKey){state.showSettings=true;state.importMessage='Add your Odds API key first.';render();return;}const win=WEEK_WINDOWS[state.selectedWeek];if(!win){state.importMessage='Live imports currently support Weeks 4–12.';render();return;}state.loadingWeek=true;state.importMessage='';render();try{const results=await Promise.allSettled(['americanfootball_ncaaf','americanfootball_ncaaf_fcs'].map(k=>fetchOdds(k,win))),events=[],errors=[];for(const r of results){if(r.status==='fulfilled')events.push(...r.value);else errors.push(r.reason?.message||'Unknown import error');}if(!events.length&&errors.length)throw new Error(errors.join(' | '));const parsed=dedupeEvents(events.map(e=>parseOddsEvent(e,state.selectedWeek)).filter(Boolean));if(!parsed.length)throw new Error('No games returned for this week.');const {error:upsertError}=await state.sb.from('games').upsert(parsed.map(toDbGame));if(upsertError)throw upsertError;const ids=parsed.map(g=>g.id);const existing=state.games.filter(g=>g.week!==state.selectedWeek);state.games=existing.concat(parsed);const missingSpread=parsed.filter(g=>!hasSpread(g)).length,missingTotal=parsed.filter(g=>!hasTotal(g)).length,complete=parsed.filter(g=>hasSpread(g)&&hasTotal(g)).length;state.importMessage=`Loaded ${parsed.length} games · ${complete} with spread + total · ${missingSpread} missing spread · ${missingTotal} missing total.${errors.length?' One source returned an error, so this may be a partial slate.':''}`;}catch(err){state.importMessage=`Import failed: ${friendlyError(err)}`;}finally{state.loadingWeek=false;render();}
+  if(!state.apiKey){state.showSettings=true;state.importMessage='Add your Odds API key first.';render();return;}
+  const win=WEEK_WINDOWS[state.selectedWeek];
+  if(!win){state.importMessage='Live imports currently support Weeks 4–12.';render();return;}
+
+  state.loadingWeek=true;
+  state.importMessage='';
+  render();
+
+  try{
+    const results=await Promise.allSettled(
+      ['americanfootball_ncaaf','americanfootball_ncaaf_fcs'].map(k=>fetchOdds(k,win))
+    );
+
+    const events=[],errors=[],usageSnapshots=[];
+    let lastPullCost=0;
+
+    for(const r of results){
+      if(r.status==='fulfilled'){
+        events.push(...r.value.events);
+        if(r.value.usage){
+          usageSnapshots.push(r.value.usage);
+          if(Number.isFinite(r.value.usage.last)) lastPullCost+=r.value.usage.last;
+        }
+      }else{
+        errors.push(r.reason?.message||'Unknown import error');
+      }
+    }
+
+    if(usageSnapshots.length){
+      const latest=usageSnapshots.reduce((best,u)=>{
+        if(!best) return u;
+        if(Number.isFinite(u.used) && (!Number.isFinite(best.used) || u.used>best.used)) return u;
+        return best;
+      },null);
+
+      if(latest && Number.isFinite(latest.used) && Number.isFinite(latest.remaining)){
+        state.apiUsage={
+          used:latest.used,
+          remaining:latest.remaining,
+          lastPullCost,
+          updatedAt:new Date().toISOString()
+        };
+        localStorage.setItem(STORAGE.apiUsage,JSON.stringify(state.apiUsage));
+      }
+    }
+
+    if(!events.length&&errors.length)throw new Error(errors.join(' | '));
+
+    const parsed=dedupeEvents(events.map(e=>parseOddsEvent(e,state.selectedWeek)).filter(Boolean));
+    if(!parsed.length)throw new Error('No games returned for this week.');
+
+    const {error:upsertError}=await state.sb.from('games').upsert(parsed.map(toDbGame));
+    if(upsertError)throw upsertError;
+
+    const existing=state.games.filter(g=>g.week!==state.selectedWeek);
+    state.games=existing.concat(parsed);
+
+    const missingSpread=parsed.filter(g=>!hasSpread(g)).length,
+          missingTotal=parsed.filter(g=>!hasTotal(g)).length,
+          complete=parsed.filter(g=>hasSpread(g)&&hasTotal(g)).length;
+
+    state.importMessage=`Loaded ${parsed.length} games · ${complete} with spread + total · ${missingSpread} missing spread · ${missingTotal} missing total.${errors.length?' One source returned an error, so this may be a partial slate.':''}`;
+  }catch(err){
+    state.importMessage=`Import failed: ${friendlyError(err)}`;
+  }finally{
+    state.loadingWeek=false;
+    render();
+  }
 }
-async function fetchOdds(sportKey,win){const params=new URLSearchParams({apiKey:state.apiKey,bookmakers:'draftkings',markets:'spreads,totals',oddsFormat:'american',dateFormat:'iso',commenceTimeFrom:win.start,commenceTimeTo:win.end});const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds?${params.toString()}`);let body;try{body=await res.json()}catch(_){body=null}if(!res.ok)throw new Error(`${sportKey}: ${body?.message||body?.error_code||`HTTP ${res.status}`}`);return Array.isArray(body)?body:[];}
+
+async function fetchOdds(sportKey,win){
+  const params=new URLSearchParams({
+    apiKey:state.apiKey,
+    bookmakers:'draftkings',
+    markets:'spreads,totals',
+    oddsFormat:'american',
+    dateFormat:'iso',
+    commenceTimeFrom:win.start,
+    commenceTimeTo:win.end
+  });
+
+  const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds?${params.toString()}`);
+
+  const headerNumber=(name)=>{
+    const raw=res.headers.get(name);
+    if(raw==null||raw==='') return null;
+    const n=Number(raw);
+    return Number.isFinite(n)?n:null;
+  };
+
+  const usage={
+    used:headerNumber('x-requests-used'),
+    remaining:headerNumber('x-requests-remaining'),
+    last:headerNumber('x-requests-last')
+  };
+
+  let body;
+  try{body=await res.json()}catch(_){body=null}
+
+  if(!res.ok)throw new Error(`${sportKey}: ${body?.message||body?.error_code||`HTTP ${res.status}`}`);
+
+  return {
+    events:Array.isArray(body)?body:[],
+    usage
+  };
+}
+
 function parseOddsEvent(e,week){if(!e?.id||!e.home_team||!e.away_team)return null;const dk=(e.bookmakers||[]).find(b=>b.key==='draftkings')||(e.bookmakers||[])[0];let spread=null,spreadTeam=null,total=null,updated=dk?.last_update||null;if(dk){const sm=(dk.markets||[]).find(m=>m.key==='spreads'),tm=(dk.markets||[]).find(m=>m.key==='totals');if(sm){const outcomes=sm.outcomes||[],fav=outcomes.find(o=>Number(o.point)<0),pick=fav||outcomes.find(o=>o.name===e.home_team)||outcomes[0];if(pick?.point!=null){spreadTeam=pick.name;spread=Number(pick.point)}updated=sm.last_update||updated;}if(tm){const over=(tm.outcomes||[]).find(o=>String(o.name).toLowerCase()==='over')||(tm.outcomes||[])[0];if(over?.point!=null)total=Number(over.point);updated=tm.last_update||updated;}}return{id:`odds-${e.id}`,sourceEventId:e.id,sourceSportKey:e.sport_key,week,away:e.away_team,home:e.home_team,spreadTeam,total,spread,commenceTime:e.commence_time,marketUpdatedAt:updated,tv:'',location:''};}
 function dedupeEvents(games){const map=new Map();games.forEach(g=>{const key=`${g.away.toLowerCase()}|${g.home.toLowerCase()}|${g.commenceTime}`;if(!map.has(key))map.set(key,g);else{const p=map.get(key),ps=(hasSpread(p)?1:0)+(hasTotal(p)?1:0),ns=(hasSpread(g)?1:0)+(hasTotal(g)?1:0);if(ns>ps)map.set(key,g)}});return[...map.values()];}
 function friendlyError(err){const msg=err?.message||String(err);if(/401|unauthorized|api key/i.test(msg))return'The Odds API key was rejected. Check Settings and try again.';if(/429|quota|usage/i.test(msg))return'The Odds API request limit appears to have been reached.';if(/Failed to fetch|NetworkError/i.test(msg))return'The browser could not reach the data service. Check your connection and try again.';return msg;}

@@ -122,3 +122,13 @@ Behavior:
 - The selector sheet is now included in the main app render.
 - Display Name, saved names, and + Add Name now appear in the intended popup.
 - No other workflow logic was changed.
+
+
+## Odds API monthly usage counter
+Admin Settings now shows:
+- credits used this month
+- total monthly credit allowance
+- credits remaining
+- cost of the most recent Load Week
+
+The values come directly from The Odds API response headers and refresh automatically after Load Week.
