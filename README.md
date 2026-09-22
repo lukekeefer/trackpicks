@@ -1,4 +1,4 @@
-# CFB Weekly V3.0 — Login + Cloud Sync
+# TrackPicks
 
 This version adds Supabase authentication and persistent cloud storage while preserving the V2.1 workflow.
 
