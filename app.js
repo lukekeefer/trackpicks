@@ -31,7 +31,7 @@ const state = {
   sb: null, session: null, user: null,
   authReady: false,
   weeks: Array.from({ length: 12 }, (_, i) => ({ week: i + 1, enabled: i + 1 >= 4 })),
-  games: [], wagers: [],
+  games: [], wagers: [], cautionGameIds: [],
   pickerOptions: ['Keef','Wilson','Both','Tail']
 };
 let tempKind='Spread', tempSelection=null, tempWho=null;
@@ -44,6 +44,41 @@ function fmtSpread(g,team){ if(g.spread==null||!g.spreadTeam)return null; return
 function marketLineFor(g,kind,selection){ return kind==='Spread'?fmtSpread(g,selection):g.total; }
 function weekGames(week){ return state.games.filter(g=>g.week===week).sort((a,b)=>new Date(a.commenceTime)-new Date(b.commenceTime)); }
 function weekWagers(week){ return state.wagers.filter(w=>gameById(w.gameId)?.week===week); }
+
+function isCautioned(gameId){ return state.cautionGameIds.includes(gameId); }
+function isGradedResult(result){ return ['Win','Loss','Push','DDL'].includes(result); }
+function normalizedResult(result){ return result==='DDL'?'Loss':result; }
+function isDDLResult(result){ return result==='DDL'; }
+function gradedWagers(){ return state.wagers.filter(w=>isGradedResult(w.result)); }
+function reportMonths(){
+  const map=new Map();
+  gradedWagers().forEach(w=>{
+    const g=gameById(w.gameId);
+    if(!g?.commenceTime)return;
+    const d=new Date(g.commenceTime);
+    const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    if(!map.has(key))map.set(key,new Intl.DateTimeFormat(undefined,{month:'long',year:'numeric'}).format(d));
+  });
+  return [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+}
+function wagersForReport(scope,value){
+  return gradedWagers().filter(w=>{
+    const g=gameById(w.gameId);
+    if(!g)return false;
+    if(scope==='week')return g.week===Number(value);
+    if(scope==='month'){
+      if(!g.commenceTime)return false;
+      const d=new Date(g.commenceTime);
+      const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      return key===value;
+    }
+    return true;
+  }).sort((a,b)=>{
+    const ga=gameById(a.gameId),gb=gameById(b.gameId);
+    return (ga?.week||0)-(gb?.week||0)||new Date(ga?.commenceTime||0)-new Date(gb?.commenceTime||0);
+  });
+}
+
 function hasSpread(g){ return g?.spread!=null && !!g.spreadTeam; }
 function hasTotal(g){ return g?.total!=null; }
 function formatKickoff(iso){ if(!iso)return{date:'Time TBD',time:''}; const d=new Date(iso); return {date:new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric'}).format(d),time:new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(d)}; }
@@ -74,7 +109,7 @@ async function initCloud(){
       await refreshAdminStatus();
       if(state.user) await loadUserProfile();
       if(state.user) await syncFromCloud();
-      else {state.isAdmin=false;state.games=[];state.wagers=[];}
+      else {state.isAdmin=false;state.games=[];state.wagers=[];state.cautionGameIds=[];}
       render();
     });
     if(state.user) await syncFromCloud();
@@ -86,13 +121,17 @@ async function syncFromCloud(){
   if(!state.sb||!state.user)return;
   state.syncing=true; render();
   try{
-    const [gamesRes,wagersRes]=await Promise.all([
+    const [gamesRes,wagersRes,flagsRes]=await Promise.all([
       state.sb.from('games').select('*').eq('season',2026).gte('week',4).lte('week',12),
-      state.sb.from('wagers').select('*').eq('user_id',state.user.id)
+      state.sb.from('wagers').select('*').eq('user_id',state.user.id),
+      state.sb.from('user_game_flags').select('game_id,caution').eq('user_id',state.user.id).eq('caution',true)
     ]);
-    if(gamesRes.error)throw gamesRes.error; if(wagersRes.error)throw wagersRes.error;
+    if(gamesRes.error)throw gamesRes.error;
+    if(wagersRes.error)throw wagersRes.error;
+    if(flagsRes.error)throw flagsRes.error;
     state.games=(gamesRes.data||[]).map(fromDbGame);
     state.wagers=(wagersRes.data||[]).map(fromDbWager);
+    state.cautionGameIds=(flagsRes.data||[]).map(r=>r.game_id);
   }catch(err){ state.importMessage=`Sync failed: ${err.message||err}`; }
   finally{ state.syncing=false; }
 }
@@ -202,7 +241,7 @@ function effectivePickerNames(){
 function renderDisplayNameSetup(){
   return `<div class="auth-wrap">
     <div class="auth-card">
-      <div class="brand-mark">CFB Weekly</div>
+      <div class="brand-mark">TrackPicks</div>
       <h1>What should we call you?</h1>
       <p class="auth-copy">This becomes the default name on your picks. You can change it later in Settings.</p>
       <div class="field full">
@@ -217,22 +256,69 @@ function renderDisplayNameSetup(){
 function render(){
   const app=document.getElementById('app');
   if(state.user && !state.displayName){ app.innerHTML=renderDisplayNameSetup(); bindAuth(); return; }
-  if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">CFB Weekly</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
+  if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
   if(!cloudConfigured()){ app.innerHTML=renderCloudSetup(); bindAuth(); return; }
   if(!state.user){ app.innerHTML=renderAuth(); bindAuth(); return; }
   app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():renderSlip()}</main>${bottomNav()}</div>${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}`;
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">CFB Weekly</h1><div class="auth-subtitle">V3.7.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V3.7.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">CFB Weekly</h1><div class="auth-subtitle">V3.7.3 · Your weekly picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V3.7.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='2026 College Football',subtitle='Weekly picks workspace · V3.7.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} saved wager(s) · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V3.7.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} saved wager(s) · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
-function renderMarket(){ const games=weekGames(state.selectedWeek),message=state.importMessage?`<div class="notice">${state.importMessage}</div>`:''; if(!games.length)return `${message}<div class="empty"><strong>No games loaded for Week ${state.selectedWeek}.</strong><br><br>${state.isAdmin?'Tap <b>Load Week</b> to pull the current DraftKings slate.':'The weekly board has not been published yet.'}</div>`; return `${message}<div class="game-list">${games.map(g=>{const saved=wagersForGame(g.id).length,k=formatKickoff(g.commenceTime);return `<button class="game-row ${saved?'saved':''}" data-game="${g.id}"><div class="game-matchup">${g.away} @ ${g.home}</div><div class="game-market">${marketSummary(g)}</div><div class="game-kickoff">${k.date} · ${k.time}</div>${saved?`<span class="badge">${saved} saved</span>`:''}${(!hasSpread(g)||!hasTotal(g))?'<span class="warning-badge">Missing market</span>':''}</button>`}).join('')}</div>`; }
-function renderSlip(){ const wagers=weekWagers(state.selectedWeek); if(!wagers.length)return `<div class="empty">No saved picks yet. Open the Full Slate tab and select a game.</div>`; return wagers.map(w=>{const g=gameById(w.gameId);if(!g)return'';const result=w.result||'Pending';const resultClass=result==='Win'?'result-win':result==='Loss'?'result-loss':result==='Push'?'result-push':'result-pending';return `<div class="slip-card compact-slip"><div class="slip-main"><div class="slip-copy"><div class="slip-pick">${w.pick}</div><div class="slip-meta">${g.away} @ ${g.home}</div><div class="slip-meta">${w.who} · <strong>${Number(w.units).toFixed(1)}u</strong></div></div><div class="slip-right"><span class="result-badge ${resultClass}">${result}</span><button class="remove-btn compact-remove" data-remove="${w.id}">Remove</button></div></div><div class="slip-actions compact-actions"><button class="secondary compact-btn" data-edit="${w.id}">Edit Pick</button><button class="secondary compact-btn" data-open-game="${g.id}">Game</button><button class="secondary compact-btn" data-result-menu="${w.id}">${result==='Pending'?'Set Result':'Edit Result'}</button></div><div class="result-picker" data-result-picker-for="${w.id}" hidden>${['Win','Loss','Push'].map(r=>`<button class="result-choice ${r.toLowerCase()}" data-set-result="${w.id}" data-result="${r}">${r}</button>`).join('')}</div></div>`}).join(''); }
+
+function renderMarket(){
+  const games=weekGames(state.selectedWeek),
+        message=state.importMessage?`<div class="notice">${state.importMessage}</div>`:'';
+  if(!games.length)return `${message}<div class="empty"><strong>No games loaded for Week ${state.selectedWeek}.</strong><br><br>${state.isAdmin?'Tap <b>Load Week</b> to pull the current DraftKings slate.':'The weekly board has not been published yet.'}</div>`;
+  return `${message}<div class="game-list">${games.map(g=>{
+    const saved=wagersForGame(g.id).length,k=formatKickoff(g.commenceTime),caution=isCautioned(g.id);
+    return `<button class="game-row ${saved?'saved':''} ${caution?'cautioned':''}" data-game="${g.id}">
+      <div class="game-matchup">${caution?'<span class="caution-icon">⚠️</span> ':''}${g.away} @ ${g.home}</div>
+      <div class="game-market">${marketSummary(g)}</div>
+      <div class="game-kickoff">${k.date} · ${k.time}</div>
+      ${saved?`<span class="badge">${saved} saved</span>`:''}
+      ${(!hasSpread(g)||!hasTotal(g))?'<span class="warning-badge">Missing market</span>':''}
+    </button>`;
+  }).join('')}</div>`;
+}
+
+function renderSlip(){
+  const wagers=weekWagers(state.selectedWeek);
+  if(!wagers.length)return `<div class="empty">No saved picks yet. Open the Full Slate tab and select a game.</div>`;
+  return wagers.map(w=>{
+    const g=gameById(w.gameId);
+    if(!g)return'';
+    const result=w.result||'Pending',
+          resultClass=result==='Win'?'result-win':result==='Loss'?'result-loss':result==='DDL'?'result-ddl':result==='Push'?'result-push':'result-pending',
+          caution=isCautioned(g.id);
+    return `<div class="slip-card compact-slip ${caution?'cautioned':''}">
+      <div class="slip-main">
+        <div class="slip-copy">
+          <div class="slip-pick">${caution?'<span class="caution-icon">⚠️</span> ':''}${w.pick}</div>
+          <div class="slip-meta">${g.away} @ ${g.home}</div>
+          <div class="slip-meta">${w.who} · <strong>${Number(w.units).toFixed(1)}u</strong></div>
+        </div>
+        <div class="slip-right">
+          <span class="result-badge ${resultClass}">${result}</span>
+          <button class="remove-btn compact-remove" data-remove="${w.id}">Remove</button>
+        </div>
+      </div>
+      <div class="slip-actions compact-actions">
+        <button class="secondary compact-btn" data-edit="${w.id}">Edit Pick</button>
+        <button class="secondary compact-btn" data-open-game="${g.id}">Game</button>
+        <button class="secondary compact-btn" data-result-menu="${w.id}">${result==='Pending'?'Set Result':'Edit Result'}</button>
+      </div>
+      <div class="result-picker" data-result-picker-for="${w.id}" hidden>
+        ${['Win','Loss','Push','DDL'].map(r=>`<button class="result-choice ${r.toLowerCase()}" data-set-result="${w.id}" data-result="${r}">${r}</button>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
 function renderChoiceArea(g,kind,selection){ if(kind==='Spread'){if(!hasSpread(g))return '<div class="missing-box">DraftKings spread is unavailable for this game.</div>';return `<div class="bet-type-grid" style="margin-top:10px"><button class="choice-btn ${selection===g.away?'selected':''}" data-selection="${escapeAttr(g.away)}">${g.away} ${signed(fmtSpread(g,g.away))}</button><button class="choice-btn ${selection===g.home?'selected':''}" data-selection="${escapeAttr(g.home)}">${g.home} ${signed(fmtSpread(g,g.home))}</button></div>`;} if(!hasTotal(g))return '<div class="missing-box">DraftKings total is unavailable for this game.</div>';return `<div class="bet-type-grid" style="margin-top:10px"><button class="choice-btn ${selection==='Over'?'selected':''}" data-selection="Over">Over ${g.total}</button><button class="choice-btn ${selection==='Under'?'selected':''}" data-selection="Under">Under ${g.total}</button></div>`; }
 
 function renderPickerSelector(){
@@ -263,7 +349,7 @@ function renderPickerSelector(){
   </div>`;
 }
 
-function renderGameSheet(){ const g=gameById(state.activeGameId);if(!g)return'';const editing=state.editWagerId?state.wagers.find(w=>w.id===state.editWagerId):null;const defaultWho=tempWho||editing?.who||state.displayName||'';let kind=editing?.betType||(hasSpread(g)?'Spread':'Total');if(kind==='Spread'&&!hasSpread(g))kind='Total';if(kind==='Total'&&!hasTotal(g))kind='Spread';const selection=editing?.selection||(kind==='Spread'?g.spreadTeam:'Over');tempKind=kind;tempSelection=selection;const actualLineValue=editing?editing.line:'';const k=formatKickoff(g.commenceTime);return `<div class="overlay"><section class="sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${g.away} @ ${g.home}</h2><div class="detail-meta">${k.date} · ${k.time}${g.tv?`<br>${g.tv}`:''}${g.location?` · ${g.location}`:''}</div></div><button class="icon-btn" data-close>✕</button></div><div class="market-box"><strong>DraftKings market snapshot</strong>${marketSummary(g)}${g.marketUpdatedAt?`<div class="market-updated">Updated ${formatKickoff(g.marketUpdatedAt).date} · ${formatKickoff(g.marketUpdatedAt).time}</div>`:''}</div><div class="wager-editor"><div class="section-title">${editing?'Edit wager':'Add wager'}</div><div class="bet-type-grid"><button class="choice-btn ${kind==='Spread'?'selected':''}" data-kind="Spread" ${hasSpread(g)?'':'disabled'}>Spread</button><button class="choice-btn ${kind==='Total'?'selected':''}" data-kind="Total" ${hasTotal(g)?'':'disabled'}>Total</button></div><div id="choiceArea">${renderChoiceArea(g,kind,selection)}</div><div class="field-grid"><div class="field"><label>Actual line taken</label><input id="lineInput" type="number" step="0.5" value="${actualLineValue}" placeholder="Optional — defaults to market"></div><div class="field"><label>Units</label><input id="unitsInput" type="number" min="0.1" step="0.5" value="${editing?.units??1}"></div><div class="field full"><label>Who’s picks are these?</label><button type="button" class="picker-select-btn" data-open-picker-selector><span id="pickerSelectionLabel">${escapeAttr(defaultWho)}</span><span class="chev">›</span></button><input id="whoInput" type="hidden" value="${escapeAttr(defaultWho)}"></div></div><button class="primary ${state.saving?'saved-confirmation':''}" data-save-wager ${state.saving?'disabled':''}>${state.saving?'✓ Saved':(editing?'Save Changes':'Confirm Bet')}</button></div></section></div>`; }
+function renderGameSheet(){ const g=gameById(state.activeGameId);if(!g)return'';const editing=state.editWagerId?state.wagers.find(w=>w.id===state.editWagerId):null;const defaultWho=tempWho||editing?.who||state.displayName||'';let kind=editing?.betType||(hasSpread(g)?'Spread':'Total');if(kind==='Spread'&&!hasSpread(g))kind='Total';if(kind==='Total'&&!hasTotal(g))kind='Spread';const selection=editing?.selection||(kind==='Spread'?g.spreadTeam:'Over');tempKind=kind;tempSelection=selection;const actualLineValue=editing?editing.line:'';const k=formatKickoff(g.commenceTime);return `<div class="overlay"><section class="sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${g.away} @ ${g.home}</h2><div class="detail-meta">${k.date} · ${k.time}${g.tv?`<br>${g.tv}`:''}${g.location?` · ${g.location}`:''}</div></div><button class="icon-btn" data-close>✕</button></div><div class="market-box"><strong>DraftKings market snapshot</strong>${marketSummary(g)}${g.marketUpdatedAt?`<div class="market-updated">Updated ${formatKickoff(g.marketUpdatedAt).date} · ${formatKickoff(g.marketUpdatedAt).time}</div>`:''}</div><button type="button" class="caution-toggle ${isCautioned(g.id)?'active':''}" data-toggle-caution="${g.id}">${isCautioned(g.id)?'⚠️ Caution Marked':'⚠️ Mark Caution'}</button><div class="wager-editor"><div class="section-title">${editing?'Edit wager':'Add wager'}</div><div class="bet-type-grid"><button class="choice-btn ${kind==='Spread'?'selected':''}" data-kind="Spread" ${hasSpread(g)?'':'disabled'}>Spread</button><button class="choice-btn ${kind==='Total'?'selected':''}" data-kind="Total" ${hasTotal(g)?'':'disabled'}>Total</button></div><div id="choiceArea">${renderChoiceArea(g,kind,selection)}</div><div class="field-grid"><div class="field"><label>Actual line taken</label><input id="lineInput" type="number" step="0.5" value="${actualLineValue}" placeholder="Optional — defaults to market"></div><div class="field"><label>Units</label><input id="unitsInput" type="number" min="0.1" step="0.5" value="${editing?.units??1}"></div><div class="field full"><label>Who’s picks are these?</label><button type="button" class="picker-select-btn" data-open-picker-selector><span id="pickerSelectionLabel">${escapeAttr(defaultWho)}</span><span class="chev">›</span></button><input id="whoInput" type="hidden" value="${escapeAttr(defaultWho)}"></div></div><button class="primary ${state.saving?'saved-confirmation':''}" data-save-wager ${state.saving?'disabled':''}>${state.saving?'✓ Saved':(editing?'Save Changes':'Confirm Bet')}</button></div></section></div>`; }
 function renderSettingsSheet(){
   const adminApiSection = state.isAdmin ? `
     <div class="security-note">
@@ -303,8 +389,29 @@ function renderSettingsSheet(){
       </div>
 
       ${adminApiSection}
+      
+      <div class="settings-section">
+        <div class="section-title">Reports</div>
+        <div class="report-card">
+          <div class="report-row">
+            <select id="reportWeekSelect" class="report-select">
+              ${state.weeks.filter(w=>w.enabled).map(w=>`<option value="${w.week}" ${w.week===state.selectedWeek?'selected':''}>Week ${w.week}</option>`).join('')}
+            </select>
+            <button class="secondary report-btn" data-export-report="week">Weekly CSV</button>
+          </div>
+          <div class="report-row">
+            <select id="reportMonthSelect" class="report-select">
+              ${reportMonths().length?reportMonths().map(([key,label])=>`<option value="${key}">${label}</option>`).join(''):'<option value="">No graded months yet</option>'}
+            </select>
+            <button class="secondary report-btn" data-export-report="month" ${reportMonths().length?'':'disabled'}>Monthly CSV</button>
+          </div>
+          <button class="secondary full-width" data-export-report="season">Season CSV</button>
+          <div class="report-note">Only graded picks are included. DDL is graded and exported as a Loss with DDL = Yes.</div>
+        </div>
+      </div>
+
       <div class="cloud-warning">
-        <strong>Cloud sync is active.</strong> This app is permanently connected to the shared CFB Weekly database. Games are shared with signed-in users; picks are private to each account.
+        <strong>Cloud sync is active.</strong> This app is permanently connected to the shared TrackPicks database. Games are shared with signed-in users; picks are private to each account.
       </div>
       <button class="secondary full-width" data-sync-now>Sync Now</button>
       <button class="danger-outline" data-signout>Log Out</button>
@@ -356,6 +463,29 @@ function bind(){
   document.querySelectorAll('[data-remove]').forEach(el=>el.onclick=()=>removeWager(el.dataset.remove));
   document.querySelectorAll('[data-result-menu]').forEach(el=>el.onclick=()=>{const id=el.dataset.resultMenu;document.querySelectorAll('[data-result-picker-for]').forEach(p=>{p.hidden=p.dataset.resultPickerFor!==id?true:!p.hidden;});});
   document.querySelectorAll('[data-set-result]').forEach(el=>el.onclick=async()=>{const id=el.dataset.setResult,result=el.dataset.result;const {error}=await state.sb.from('wagers').update({result,updated_at:new Date().toISOString()}).eq('id',id).eq('user_id',state.user.id);if(error){alert(`Could not update result: ${error.message}`);return;}const w=state.wagers.find(x=>x.id===id);if(w)w.result=result;const card=el.closest('.slip-card');const picker=card?.querySelector('.result-picker');if(picker)picker.hidden=true;const badge=card?.querySelector('.result-badge');if(badge){badge.className='result-badge result-saved';badge.textContent='✓ Saved';}const menuBtn=card?.querySelector('[data-result-menu]');if(menuBtn)menuBtn.textContent='Edit Result';setTimeout(()=>render(),1600);});
+
+  document.querySelectorAll('[data-toggle-caution]').forEach(el=>el.onclick=async()=>{
+    const gameId=el.dataset.toggleCaution;
+    if(isCautioned(gameId)){
+      const {error}=await state.sb.from('user_game_flags').delete().eq('user_id',state.user.id).eq('game_id',gameId);
+      if(error){alert(`Could not remove caution: ${error.message}`);return;}
+      state.cautionGameIds=state.cautionGameIds.filter(id=>id!==gameId);
+    }else{
+      const {error}=await state.sb.from('user_game_flags').upsert({user_id:state.user.id,game_id:gameId,caution:true,updated_at:new Date().toISOString()});
+      if(error){alert(`Could not save caution: ${error.message}`);return;}
+      if(!state.cautionGameIds.includes(gameId))state.cautionGameIds.push(gameId);
+    }
+    render();
+  });
+
+  document.querySelectorAll('[data-export-report]').forEach(el=>el.onclick=()=>{
+    const scope=el.dataset.exportReport;
+    let value=null;
+    if(scope==='week')value=document.getElementById('reportWeekSelect')?.value;
+    if(scope==='month')value=document.getElementById('reportMonthSelect')?.value;
+    exportReportCSV(scope,value);
+  });
+
   document.querySelectorAll('[data-action="export"]').forEach(el=>el.onclick=exportCSV);
 
   document.querySelectorAll('[data-save-display-name]').forEach(el=>el.onclick=async()=>{
@@ -536,6 +666,49 @@ async function fetchOdds(sportKey,win){
 function parseOddsEvent(e,week){if(!e?.id||!e.home_team||!e.away_team)return null;const dk=(e.bookmakers||[]).find(b=>b.key==='draftkings')||(e.bookmakers||[])[0];let spread=null,spreadTeam=null,total=null,updated=dk?.last_update||null;if(dk){const sm=(dk.markets||[]).find(m=>m.key==='spreads'),tm=(dk.markets||[]).find(m=>m.key==='totals');if(sm){const outcomes=sm.outcomes||[],fav=outcomes.find(o=>Number(o.point)<0),pick=fav||outcomes.find(o=>o.name===e.home_team)||outcomes[0];if(pick?.point!=null){spreadTeam=pick.name;spread=Number(pick.point)}updated=sm.last_update||updated;}if(tm){const over=(tm.outcomes||[]).find(o=>String(o.name).toLowerCase()==='over')||(tm.outcomes||[])[0];if(over?.point!=null)total=Number(over.point);updated=tm.last_update||updated;}}return{id:`odds-${e.id}`,sourceEventId:e.id,sourceSportKey:e.sport_key,week,away:e.away_team,home:e.home_team,spreadTeam,total,spread,commenceTime:e.commence_time,marketUpdatedAt:updated,tv:'',location:''};}
 function dedupeEvents(games){const map=new Map();games.forEach(g=>{const key=`${g.away.toLowerCase()}|${g.home.toLowerCase()}|${g.commenceTime}`;if(!map.has(key))map.set(key,g);else{const p=map.get(key),ps=(hasSpread(p)?1:0)+(hasTotal(p)?1:0),ns=(hasSpread(g)?1:0)+(hasTotal(g)?1:0);if(ns>ps)map.set(key,g)}});return[...map.values()];}
 function friendlyError(err){const msg=err?.message||String(err);if(/401|unauthorized|api key/i.test(msg))return'The Odds API key was rejected. Check Settings and try again.';if(/429|quota|usage/i.test(msg))return'The Odds API request limit appears to have been reached.';if(/Failed to fetch|NetworkError/i.test(msg))return'The browser could not reach the data service. Check your connection and try again.';return msg;}
-function exportCSV(){const wagers=weekWagers(state.selectedWeek),rows=[['Matchup','Bet Type','Line/Total','Who','Pick','Result']];wagers.forEach(w=>{const g=gameById(w.gameId);if(g)rows.push([`${g.away}\n${g.home}`,w.betType,w.line,w.who,w.pick,w.result==='Pending'?'':w.result])});const csv=rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\r\n'),blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`CFB_Week_${state.selectedWeek}_Dashboard_Export.csv`;a.click();URL.revokeObjectURL(url);}
+
+function csvRowsForWagers(wagers){
+  const rows=[['Week','Matchup','Bet Type','Line/Total','Who','Pick','Units','Result','Caution','DDL']];
+  wagers.forEach(w=>{
+    const g=gameById(w.gameId);
+    if(!g)return;
+    rows.push([
+      g.week,
+      `${g.away}\n${g.home}`,
+      w.betType,
+      w.line,
+      w.who,
+      w.pick,
+      Number(w.units),
+      normalizedResult(w.result),
+      isCautioned(g.id)?'Yes':'',
+      isDDLResult(w.result)?'Yes':''
+    ]);
+  });
+  return rows;
+}
+function downloadCSV(rows,filename){
+  const csv=rows.map(r=>r.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+function exportReportCSV(scope,value){
+  const wagers=wagersForReport(scope,value);
+  if(!wagers.length){alert('No graded picks are available for that report.');return;}
+  let label='2026_Season';
+  if(scope==='week')label=`Week_${value}`;
+  if(scope==='month')label=value;
+  downloadCSV(csvRowsForWagers(wagers),`TrackPicks_${label}_Report.csv`);
+}
+function exportCSV(){
+  const wagers=wagersForReport('week',state.selectedWeek);
+  if(!wagers.length){alert(`Week ${state.selectedWeek} has no graded picks to export.`);return;}
+  downloadCSV(csvRowsForWagers(wagers),`TrackPicks_Week_${state.selectedWeek}_Report.csv`);
+}
 
 initCloud();

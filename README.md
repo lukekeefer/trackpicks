@@ -132,3 +132,16 @@ Admin Settings now shows:
 - cost of the most recent Load Week
 
 The values come directly from The Odds API response headers and refresh automatically after Load Week.
+
+
+## TrackPicks: caution, DDL, and reports
+
+Run `SUPABASE_CAUTION_DDL_UPDATE.sql` before deploying.
+
+- ⚠️ Caution is user-specific and appears on Full Slate and Slip.
+- DDL is selectable as a result but grades exactly like Loss.
+- DDL exports as `Result = Loss` and `DDL = Yes`.
+- Weekly, Monthly, and Season CSV reports are available in Settings.
+- Reports include graded picks only.
+- CSV columns:
+  `Week | Matchup | Bet Type | Line/Total | Who | Pick | Units | Result | Caution | DDL`

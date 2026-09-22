@@ -1,6 +1,6 @@
 {
-  "name": "CFB Weekly",
-  "short_name": "CFB Weekly",
+  "name": "TrackPicks",
+  "short_name": "TrackPicks",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f5f7fb",
