@@ -117,7 +117,7 @@ Behavior:
 - Custom picker-name selections persist while the game screen re-renders.
 
 
-## V3.7.3 — Picker menu render fix
+## V1.1 — Picker menu render fix
 - Fixes “Who’s picks are these?” not opening.
 - The selector sheet is now included in the main app render.
 - Display Name, saved names, and + Add Name now appear in the intended popup.
