@@ -27,3 +27,8 @@
 - Toggle Teaser on: automatic parlay estimate should clear and teaser odds should be entered manually.
 - Full Slate filter row should still show FBS / FCS / All / SEC / Big Ten / Big 12 / ACC / G6.
 - All visible version markings should read V1.2.
+
+- New game shows all four wager buttons with none selected: away spread, home spread, Over, Under.
+- Selecting any one button is a complete wager choice; Confirm Bet and Add to Parlay use that selection.
+- A week containing only a graded parlay/teaser exports successfully from Slip > Export CSV.
+- Parlay/teaser appears as one CSV row; legs are listed inside the Pick field and are not exported as straight wagers.

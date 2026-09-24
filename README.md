@@ -9,7 +9,7 @@ This build adds parlays without changing the existing straight-wager data model.
 - Teaser toggle supports a user-selected point amount and applies it to both spread and total legs in the bettor's favor.
 - Saved parlays can be edited, removed, and manually graded Win/Loss/Push/DDL.
 - Straight-pick CSV/reporting remains unchanged; parlay legs do not count as straight picks.
-- Visible app version is V1.2; cache build is 20260923-13.
+- Visible app version is V1.2; cache build is 20260923-14.
 
 ### Deploy order
 1. Run `TRACKPICKS_V1_2_PARLAYS.sql` manually in Supabase SQL Editor.
@@ -192,10 +192,13 @@ Do not add aggressive service-worker caching unless deliberately redesigned; Tra
 Single-game market info includes **Spread History** and **Total History** buttons when at least two snapshots exist. Charts use `game_odds_history` and normalize spreads to the home-team line. The first captured TrackPicks line is a baseline, not a claimed sportsbook opener.
 
 
-## V1.2 fix — build 20260923-13
+## V1.2 fix — build 20260923-14
 - Restores/keeps the Full Slate FBS/FCS + conference filters.
 - Removes all default wager selection on a newly opened game. The user must choose Spread or Total, then choose the side/Over/Under.
 - Normal parlay payout odds auto-fill from leg count assuming every leg is -110; the user can overwrite the value before saving.
 - Teasers do not get an automatic odds estimate; the user enters teaser payout odds manually.
 - Visible app version remains V1.2.
 - No additional Supabase SQL is required if the V1.2 parlay SQL has already been run.
+
+
+V1.2 hotfix 20260923-14: direct 4-button wager selection (away spread, home spread, over, under) with no default selection; weekly CSV export now includes graded parlays/teasers as wager rows.
