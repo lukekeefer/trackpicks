@@ -1,5 +1,23 @@
 # TrackPicks
 
+## V1.2 — Parlays & Teasers
+This build adds parlays without changing the existing straight-wager data model.
+
+- Game page: new **Add to Parlay** action.
+- Slip: **Straight Picks / Parlays** segmented view.
+- Parlay Builder supports 2+ legs, spreads and totals, units, picker, and one user-entered locked American payout-odds value.
+- Teaser toggle supports a user-selected point amount and applies it to both spread and total legs in the bettor's favor.
+- Saved parlays can be edited, removed, and manually graded Win/Loss/Push/DDL.
+- Straight-pick CSV/reporting remains unchanged; parlay legs do not count as straight picks.
+- Visible app version is V1.2; cache build is 20260923-10.
+
+### Deploy order
+1. Run `TRACKPICKS_V1_2_PARLAYS.sql` manually in Supabase SQL Editor.
+2. Upload the frontend files from the V1.2 package to GitHub and commit to `main`.
+3. Let GitHub Pages republish.
+4. Open TrackPicks and accept the update prompt if shown.
+5. QA one normal parlay and one teaser before relying on it for real tracking.
+
 This version adds Supabase authentication and persistent cloud storage while preserving the V2.1 workflow.
 
 ## What is cloud-synced
@@ -117,7 +135,7 @@ Behavior:
 - Custom picker-name selections persist while the game screen re-renders.
 
 
-## V1.1 — Picker menu render fix
+## V3.7.3 — Picker menu render fix
 - Fixes “Who’s picks are these?” not opening.
 - The selector sheet is now included in the main app render.
 - Display Name, saved names, and + Add Name now appear in the intended popup.
