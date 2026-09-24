@@ -1,6 +1,6 @@
 # TrackPicks
 
-## V1.2 — Parlays & Teasers
+## V2 — Parlays & Teasers
 This build adds parlays without changing the existing straight-wager data model.
 
 - Game page: new **Add to Parlay** action.
@@ -9,11 +9,11 @@ This build adds parlays without changing the existing straight-wager data model.
 - Teaser toggle supports a user-selected point amount and applies it to both spread and total legs in the bettor's favor.
 - Saved parlays can be edited, removed, and manually graded Win/Loss/Push/DDL.
 - Straight-pick CSV/reporting remains unchanged; parlay legs do not count as straight picks.
-- Visible app version is V1.2; cache build is 20260923-10.
+- Visible app version is V2; cache build is 20260923-12.
 
 ### Deploy order
-1. Run `TRACKPICKS_V1_2_PARLAYS.sql` manually in Supabase SQL Editor.
-2. Upload the frontend files from the V1.2 package to GitHub and commit to `main`.
+1. Run `TRACKPICKS_V2_PARLAYS.sql` manually in Supabase SQL Editor.
+2. Upload the frontend files from the V2 package to GitHub and commit to `main`.
 3. Let GitHub Pages republish.
 4. Open TrackPicks and accept the update prompt if shown.
 5. QA one normal parlay and one teaser before relying on it for real tracking.
