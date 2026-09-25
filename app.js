@@ -1,4 +1,4 @@
-const BUILD_VERSION = '1.4.3.3';
+const BUILD_VERSION = '1.4.4';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -514,10 +514,10 @@ function fromDbWager(r){ return {id:r.id,gameId:r.game_id,betType:r.bet_type,sel
 function toDbWager(w){ return {id:w.id,user_id:state.user.id,game_id:w.gameId,bet_type:w.betType,selection:w.selection,line:w.line,payout_odds:w.payoutOdds,units:w.units,who:w.who,pick:w.pick,result:w.result||'Pending',market_spread:w.marketSpread,market_total:w.marketTotal,market_moneyline:w.marketMoneyline,updated_at:new Date().toISOString()}; }
 function fromDbParlay(r){ return {id:r.id,week:Number(r.week),who:r.who,units:Number(r.units),odds:Number(r.odds),isTeaser:!!r.is_teaser,teaserPoints:r.teaser_points==null?null:Number(r.teaser_points),result:r.result||'Pending',createdAt:r.created_at}; }
 function toDbParlay(p){ return {id:p.id,user_id:state.user.id,season:2026,week:p.week,who:p.who,units:p.units,odds:p.odds,is_teaser:p.isTeaser,teaser_points:p.isTeaser?p.teaserPoints:null,result:p.result||'Pending',updated_at:new Date().toISOString()}; }
-function fromDbParlayLeg(r){ return {id:r.id,parlayId:r.parlay_id,gameId:r.game_id,legOrder:Number(r.leg_order),betType:r.bet_type,selection:r.selection,sourceLine:r.source_line==null?null:Number(r.source_line),line:r.line==null?null:Number(r.line),odds:r.odds==null?null:Number(r.odds),pick:r.pick}; }
+function fromDbParlayLeg(r){ return {id:r.id,parlayId:r.parlay_id,gameId:r.game_id,legOrder:Number(r.leg_order),betType:r.bet_type,selection:r.selection,sourceLine:r.source_line==null?null:Number(r.source_line),line:r.line==null?null:Number(r.line),odds:r.odds==null?null:Number(r.odds),pick:r.pick,result:r.result||'Pending'}; }
 function toDbParlayLeg(leg,parlayId,legOrder,finalLine){
   const pick=leg.betType==='Spread'?`${leg.selection} ${signed(finalLine)}`:leg.betType==='Moneyline'?`${leg.selection} ${formatAmericanOdds(finalLine)}`:`${leg.selection} ${finalLine}`;
-  return {id:leg.id||crypto.randomUUID(),parlay_id:parlayId,user_id:state.user.id,game_id:leg.gameId,leg_order:legOrder,bet_type:leg.betType,selection:leg.selection,source_line:leg.sourceLine==null?null:Number(leg.sourceLine),line:finalLine==null?null:Number(finalLine),odds:leg.odds==null?null:Number(leg.odds),pick};
+  return {id:leg.id||crypto.randomUUID(),parlay_id:parlayId,user_id:state.user.id,game_id:leg.gameId,leg_order:legOrder,bet_type:leg.betType,selection:leg.selection,source_line:leg.sourceLine==null?null:Number(leg.sourceLine),line:finalLine==null?null:Number(finalLine),odds:leg.odds==null?null:Number(leg.odds),pick,result:'Pending'};
 }
 
 
@@ -642,11 +642,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.3.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.4 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.3.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.4 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V1.4.3.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V1.4.4',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -671,17 +671,16 @@ function renderMarket(){
 }
 
 function resultClassFor(result){ return result==='Win'?'result-win':result==='Loss'?'result-loss':result==='DDL'?'result-ddl':result==='Push'?'result-push':'result-pending'; }
-async function pushStraightResults(){
+async function pushResults(){
   if(state.pushingResults||!state.sb||!state.user)return;
   const week=state.selectedWeek;
-
   state.pushingResults=true;
   state.pushResultsMessage='Checking final scores…';
   render();
 
   try{
     const {data,error}=await state.sb.functions.invoke('trackpicks_results_sync',{
-      body:{week,gradeStraight:true}
+      body:{week,gradeStraight:true,gradeParlays:true}
     });
     if(error)throw new Error(error.message||String(error));
     if(!data?.ok && data?.updateErrors?.length){
@@ -694,8 +693,7 @@ async function pushStraightResults(){
       state.games=state.games.map(g=>{
         const r=byId.get(g.id);
         if(!r)return g;
-        return {
-          ...g,
+        return {...g,
           awayScore:r.awayScore==null?g.awayScore:Number(r.awayScore),
           homeScore:r.homeScore==null?g.homeScore:Number(r.homeScore),
           gameCompleted:!!r.gameCompleted,
@@ -705,26 +703,42 @@ async function pushStraightResults(){
       });
     }
 
-    const grades=Array.isArray(data?.straightGrades)?data.straightGrades:[];
-    if(grades.length){
-      const byWager=new Map(grades.map(x=>[x.id,x.result]));
-      state.wagers.forEach(w=>{
-        const result=byWager.get(w.id);
-        if(result)w.result=result;
-      });
+    const straightGrades=Array.isArray(data?.straightGrades)?data.straightGrades:[];
+    if(straightGrades.length){
+      const byWager=new Map(straightGrades.map(x=>[x.id,x.result]));
+      state.wagers.forEach(w=>{const result=byWager.get(w.id);if(result)w.result=result;});
     }
 
-    const graded=Number(data?.straightGraded||0);
-    const notReady=Number(data?.straightNotReady||0);
-    const failed=Number(data?.straightFailed||0);
+    const legGrades=Array.isArray(data?.parlayLegGrades)?data.parlayLegGrades:[];
+    if(legGrades.length){
+      const byLeg=new Map(legGrades.map(x=>[x.id,x.result]));
+      state.parlayLegs.forEach(l=>{const result=byLeg.get(l.id);if(result)l.result=result;});
+    }
 
-    if(graded===0){
-      state.pushResultsMessage=Number(data?.completed||0)>0
-        ? 'No pending straight bets are ready to grade yet.'
+    const parlayGrades=Array.isArray(data?.parlayGrades)?data.parlayGrades:[];
+    if(parlayGrades.length){
+      const byParlay=new Map(parlayGrades.map(x=>[x.id,x.result]));
+      state.parlays.forEach(p=>{const result=byParlay.get(p.id);if(result)p.result=result;});
+    }
+
+    const straightGraded=Number(data?.straightGraded||0);
+    const legsGraded=Number(data?.parlayLegsGraded||0);
+    const parlaysGraded=Number(data?.parlaysGraded||0);
+    const manualReview=Number(data?.parlaysManualReview||0);
+    const failed=Number(data?.straightFailed||0)+Number(data?.parlayFailed||0);
+
+    const parts=[];
+    if(straightGraded)parts.push(`${straightGraded} straight ${straightGraded===1?'bet':'bets'}`);
+    if(legsGraded)parts.push(`${legsGraded} ${legsGraded===1?'leg':'legs'}`);
+    if(parlaysGraded)parts.push(`${parlaysGraded} ${parlaysGraded===1?'parlay/teaser':'parlays/teasers'}`);
+    if(manualReview)parts.push(`${manualReview} manual review`);
+    if(failed)parts.push(`${failed} failed`);
+
+    state.pushResultsMessage=parts.length
+      ? `Updated: ${parts.join(' · ')}.`
+      : Number(data?.completed||0)>0
+        ? 'Nothing new is ready to grade yet.'
         : 'No completed games are available yet.';
-    }else{
-      state.pushResultsMessage=`${graded} straight ${graded===1?'bet':'bets'} graded${notReady>0?` · ${notReady} not ready`:''}${failed>0?` · ${failed} failed`:''}.`;
-    }
   }catch(err){
     state.pushResultsMessage=`Push Results failed: ${err.message||err}`;
   }finally{
@@ -759,7 +773,8 @@ function renderParlayLeg(leg,draft){
 }
 function renderSavedParlay(p){
   const legs=legsForParlay(p.id),result=p.result||'Pending',profit=americanProfitUnits(p.units,p.odds);
-  return `<div class="slip-card parlay-card"><div class="slip-main"><div class="slip-copy"><div class="slip-pick">${legs.length}-Leg ${p.isTeaser?`${Number(p.teaserPoints)}-Point Teaser`:'Parlay'}</div><div class="slip-meta">${p.who} · <strong>${Number(p.units).toFixed(1)}u</strong> · <strong>${formatAmericanOdds(p.odds)}</strong>${profit!=null?` · To win ${profit.toFixed(2)}u`:''}</div></div><div class="slip-right"><span class="result-badge ${resultClassFor(result)}">${result}</span><button class="remove-btn compact-remove" data-remove-parlay="${p.id}">Remove</button></div></div><div class="saved-parlay-legs">${legs.map(l=>`<div>${escapeAttr(l.pick)}</div>`).join('')}</div><div class="slip-actions compact-actions"><button class="secondary compact-btn" data-edit-parlay="${p.id}">Edit Parlay</button><button class="secondary compact-btn" data-parlay-result-menu="${p.id}">${result==='Pending'?'Set Result':'Edit Result'}</button></div><div class="result-picker" data-parlay-result-picker-for="${p.id}" hidden>${['Win','Loss','Push','DDL'].map(r=>`<button class="result-choice ${r.toLowerCase()}" data-set-parlay-result="${p.id}" data-result="${r}">${r}</button>`).join('')}</div></div>`;
+  const needsManualReview=legs.some(l=>(l.result||'Pending')==='Push');
+  return `<div class="slip-card parlay-card"><div class="slip-main"><div class="slip-copy"><div class="slip-pick">${legs.length}-Leg ${p.isTeaser?`${Number(p.teaserPoints)}-Point Teaser`:'Parlay'}${needsManualReview?` <span class="manual-review-icon" title="Pushed leg — manual grading required">⚠️</span>`:''}</div><div class="slip-meta">${p.who} · <strong>${Number(p.units).toFixed(1)}u</strong> · <strong>${formatAmericanOdds(p.odds)}</strong>${profit!=null?` · To win ${profit.toFixed(2)}u`:''}${needsManualReview?` · <strong class="manual-review-text">Manual review</strong>`:''}</div></div><div class="slip-right"><span class="result-badge ${resultClassFor(result)}">${result}</span><button class="remove-btn compact-remove" data-remove-parlay="${p.id}">Remove</button></div></div><div class="saved-parlay-legs">${legs.map(l=>`<div class="saved-parlay-leg"><span>${escapeAttr(l.pick)}</span><span class="leg-result-badge ${resultClassFor(l.result||'Pending')}">${escapeAttr(l.result||'Pending')}</span></div>`).join('')}</div><div class="slip-actions compact-actions"><button class="secondary compact-btn" data-edit-parlay="${p.id}">Edit Parlay</button><button class="secondary compact-btn" data-parlay-result-menu="${p.id}">${result==='Pending'?'Set Result':'Edit Result'}</button></div><div class="result-picker" data-parlay-result-picker-for="${p.id}" hidden>${['Win','Loss','Push','DDL'].map(r=>`<button class="result-choice ${r.toLowerCase()}" data-set-parlay-result="${p.id}" data-result="${r}">${r}</button>`).join('')}</div></div>`;
 }
 function renderParlaysSlip(){
   const d=state.parlayDraft, saved=weekParlays(state.selectedWeek), names=effectivePickerNames(),profit=americanProfitUnits(d.units,d.odds);
@@ -792,9 +807,7 @@ function renderParlaysSlip(){
   return `${builder}${saved.length?`<div class="saved-parlays-title">Saved Parlays (${saved.length})</div>${saved.map(renderSavedParlay).join('')}`:'<div class="empty compact-empty">No saved parlays for this week yet.</div>'}`;
 }
 function renderSlip(){
-  const pushControls=state.slipTab==='straight'
-    ? `<div class="push-results-row"><button class="primary push-results-btn" data-push-results ${state.pushingResults?'disabled':''}>${state.pushingResults?'Checking Results…':'Push Results'}</button>${state.pushResultsMessage?`<div class="push-results-message">${escapeAttr(state.pushResultsMessage)}</div>`:''}</div>`
-    : '';
+  const pushControls=`<div class="push-results-row"><button class="primary push-results-btn" data-push-results ${state.pushingResults?'disabled':''}>${state.pushingResults?'Checking Results…':'Push Results'}</button>${state.pushResultsMessage?`<div class="push-results-message">${escapeAttr(state.pushResultsMessage)}</div>`:''}</div>`;
   return `<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
 }
 function renderChoiceArea(g,kind,selection){
@@ -1143,7 +1156,7 @@ function bind(){
   document.querySelectorAll('[data-save-wager]').forEach(el=>el.onclick=saveCurrentWager);
   document.querySelectorAll('[data-add-to-parlay]').forEach(el=>el.onclick=addCurrentSelectionToParlay);
   document.querySelectorAll('[data-slip-tab]').forEach(el=>el.onclick=()=>{state.slipTab=el.dataset.slipTab;render();});
-  document.querySelectorAll('[data-push-results]').forEach(el=>el.onclick=pushStraightResults);
+  document.querySelectorAll('[data-push-results]').forEach(el=>el.onclick=pushResults);
   document.querySelectorAll('[data-remove-parlay-leg]').forEach(el=>el.onclick=()=>{captureParlayDraftInputs();state.parlayDraft.legs=state.parlayDraft.legs.filter(l=>l.id!==el.dataset.removeParlayLeg);syncParlayEstimate();render();});
   document.querySelectorAll('[data-clear-parlay]').forEach(el=>el.onclick=()=>{resetParlayDraft();render();});
   document.querySelectorAll('[data-toggle-teaser]').forEach(el=>el.onclick=()=>{captureParlayDraftInputs();if(!state.parlayDraft.isTeaser&&state.parlayDraft.legs.some(l=>l.betType==='Moneyline')){alert('No moneylines in teasers! Cmon!');return;}state.parlayDraft.isTeaser=!state.parlayDraft.isTeaser;syncParlayEstimate();render();});
