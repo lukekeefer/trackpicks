@@ -1,4 +1,4 @@
-const TRACKPICKS_SW_VERSION = '1.4.4.2';
+const TRACKPICKS_SW_VERSION = '1.4.5';
 
 self.addEventListener('install', event => {
   self.skipWaiting();
