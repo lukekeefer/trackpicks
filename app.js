@@ -1,4 +1,4 @@
-const BUILD_VERSION = '1.4.5';
+const BUILD_VERSION = '1.4.5.2';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -516,9 +516,9 @@ function toDbWager(w){ return {id:w.id,user_id:state.user.id,game_id:w.gameId,be
 function fromDbParlay(r){ return {id:r.id,week:Number(r.week),who:r.who,units:Number(r.units),odds:Number(r.odds),isTeaser:!!r.is_teaser,teaserPoints:r.teaser_points==null?null:Number(r.teaser_points),result:r.result||'Pending',createdAt:r.created_at}; }
 function toDbParlay(p){ return {id:p.id,user_id:state.user.id,season:2026,week:p.week,who:p.who,units:p.units,odds:p.odds,is_teaser:p.isTeaser,teaser_points:p.isTeaser?p.teaserPoints:null,result:p.result||'Pending',updated_at:new Date().toISOString()}; }
 function fromDbParlayLeg(r){ return {id:r.id,parlayId:r.parlay_id,gameId:r.game_id,legOrder:Number(r.leg_order),betType:r.bet_type,selection:r.selection,sourceLine:r.source_line==null?null:Number(r.source_line),line:r.line==null?null:Number(r.line),odds:r.odds==null?null:Number(r.odds),pick:r.pick,result:r.result||'Pending'}; }
-function toDbParlayLeg(leg,parlayId,legOrder,finalLine){
+function toDbParlayLeg(leg,parlayId,legOrder,finalLine,result='Pending'){
   const pick=leg.betType==='Spread'?`${leg.selection} ${signed(finalLine)}`:leg.betType==='Moneyline'?`${leg.selection} ${formatAmericanOdds(finalLine)}`:`${leg.selection} ${finalLine}`;
-  return {id:leg.id||crypto.randomUUID(),parlay_id:parlayId,user_id:state.user.id,game_id:leg.gameId,leg_order:legOrder,bet_type:leg.betType,selection:leg.selection,source_line:leg.sourceLine==null?null:Number(leg.sourceLine),line:finalLine==null?null:Number(finalLine),odds:leg.odds==null?null:Number(leg.odds),pick,result:'Pending'};
+  return {id:leg.id||crypto.randomUUID(),parlay_id:parlayId,user_id:state.user.id,game_id:leg.gameId,leg_order:legOrder,bet_type:leg.betType,selection:leg.selection,source_line:leg.sourceLine==null?null:Number(leg.sourceLine),line:finalLine==null?null:Number(finalLine),odds:leg.odds==null?null:Number(leg.odds),pick,result:result||'Pending'};
 }
 
 
@@ -643,11 +643,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.5 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.5.2 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.5 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.5.2 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V1.4.5',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V1.4.5.2',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -1307,8 +1307,21 @@ async function saveCurrentParlay(){
   state.parlaySaving=true; render();
   const {error:parentError}=await state.sb.from('parlays').upsert(toDbParlay(parent));
   if(parentError){state.parlaySaving=false;alert(`Could not save parlay: ${parentError.message}`);render();return;}
+  const existingLegs=editing?legsForParlay(id):[];
+  const existingLegById=new Map(existingLegs.map(l=>[l.id,l]));
   if(editing){const {error:deleteError}=await state.sb.from('parlay_legs').delete().eq('parlay_id',id).eq('user_id',state.user.id);if(deleteError){state.parlaySaving=false;alert(`Could not update parlay legs: ${deleteError.message}`);render();return;}}
-  const rows=d.legs.map((leg,i)=>toDbParlayLeg(leg,id,i+1,effectiveParlayLegLine(leg,d)));
+  const rows=d.legs.map((leg,i)=>{
+    const finalLine=effectiveParlayLegLine(leg,d);
+    const previous=existingLegById.get(leg.id);
+    const sameLine=(previous?.line==null&&finalLine==null)||(previous?.line!=null&&finalLine!=null&&Math.abs(Number(previous.line)-Number(finalLine))<0.0001);
+    const sameGradeDefinition=!!previous
+      && previous.gameId===leg.gameId
+      && previous.betType===leg.betType
+      && previous.selection===leg.selection
+      && sameLine;
+    const preservedResult=sameGradeDefinition?(previous.result||'Pending'):'Pending';
+    return toDbParlayLeg(leg,id,i+1,finalLine,preservedResult);
+  });
   const {data:legData,error:legsError}=await state.sb.from('parlay_legs').insert(rows).select('*');
   if(legsError){if(!editing)await state.sb.from('parlays').delete().eq('id',id).eq('user_id',state.user.id);state.parlaySaving=false;alert(`Could not save parlay legs: ${legsError.message}`);render();return;}
   if(editing)state.parlays[state.parlays.findIndex(p=>p.id===id)]=parent; else state.parlays.push(parent);
@@ -1317,7 +1330,7 @@ async function saveCurrentParlay(){
 }
 function editParlay(id){
   const p=state.parlays.find(x=>x.id===id); if(!p)return; const legs=legsForParlay(id);
-  state.parlayDraft={id:p.id,legs:legs.map(l=>({id:l.id,gameId:l.gameId,betType:l.betType,selection:l.selection,sourceLine:l.sourceLine,odds:l.odds??-110})),who:p.who,units:p.units,odds:formatAmericanOdds(p.odds),isTeaser:p.isTeaser,teaserPoints:p.teaserPoints??6,result:p.result}; state.slipTab='parlays'; render();
+  state.parlayDraft={id:p.id,legs:legs.map(l=>({id:l.id,gameId:l.gameId,betType:l.betType,selection:l.selection,sourceLine:l.sourceLine,odds:l.odds??-110,result:l.result||'Pending'})),who:p.who,units:p.units,odds:formatAmericanOdds(p.odds),isTeaser:p.isTeaser,teaserPoints:p.teaserPoints??6,result:p.result}; state.slipTab='parlays'; render();
 }
 async function removeParlay(id){ if(!confirm('Remove this parlay?'))return; const {error}=await state.sb.from('parlays').delete().eq('id',id).eq('user_id',state.user.id); if(error){alert(`Could not remove parlay: ${error.message}`);return;} state.parlays=state.parlays.filter(p=>p.id!==id); state.parlayLegs=state.parlayLegs.filter(l=>l.parlayId!==id); if(state.parlayDraft.id===id)resetParlayDraft(); render(); }
 async function setParlayResult(id,result){ const {error}=await state.sb.from('parlays').update({result,updated_at:new Date().toISOString()}).eq('id',id).eq('user_id',state.user.id); if(error){alert(`Could not update parlay result: ${error.message}`);return;} const p=state.parlays.find(x=>x.id===id); if(p)p.result=result; render(); }
