@@ -1,4 +1,4 @@
-const BUILD_VERSION = '1.4.3';
+const BUILD_VERSION = '1.4.3.3';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -642,11 +642,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.3.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V1.4.3.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V1.4.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V1.4.3.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -671,100 +671,60 @@ function renderMarket(){
 }
 
 function resultClassFor(result){ return result==='Win'?'result-win':result==='Loss'?'result-loss':result==='DDL'?'result-ddl':result==='Push'?'result-push':'result-pending'; }
-function gradeStraightWagerFromFinal(w,g){
-  if(!w||!g||!g.gameCompleted)return null;
-  if(!Number.isFinite(g.awayScore)||!Number.isFinite(g.homeScore))return null;
-
-  const away=Number(g.awayScore),home=Number(g.homeScore);
-  const line=Number(w.line);
-
-  if(w.betType==='Spread'){
-    if(!Number.isFinite(line))return null;
-    let selectedScore,opponentScore;
-    if(w.selection===g.away){selectedScore=away;opponentScore=home;}
-    else if(w.selection===g.home){selectedScore=home;opponentScore=away;}
-    else return null;
-    const adjusted=selectedScore+line;
-    if(Math.abs(adjusted-opponentScore)<0.0001)return 'Push';
-    return adjusted>opponentScore?'Win':'Loss';
-  }
-
-  if(w.betType==='Total'){
-    if(!Number.isFinite(line))return null;
-    const total=away+home;
-    if(Math.abs(total-line)<0.0001)return 'Push';
-    if(w.selection==='Over')return total>line?'Win':'Loss';
-    if(w.selection==='Under')return total<line?'Win':'Loss';
-    return null;
-  }
-
-  if(w.betType==='Moneyline'){
-    if(away===home)return 'Push';
-    const winner=away>home?g.away:g.home;
-    if(w.selection!==g.away&&w.selection!==g.home)return null;
-    return w.selection===winner?'Win':'Loss';
-  }
-
-  return null;
-}
-
 async function pushStraightResults(){
   if(state.pushingResults||!state.sb||!state.user)return;
   const week=state.selectedWeek;
-  const pending=weekWagers(week).filter(w=>(w.result||'Pending')==='Pending');
 
   state.pushingResults=true;
-  state.pushResultsMessage='Refreshing final scores…';
+  state.pushResultsMessage='Checking final scores…';
   render();
 
   try{
-    const {error:syncError}=await state.sb.functions.invoke('trackpicks_results_sync',{body:{week}});
-    if(syncError)throw new Error(`Results refresh failed: ${syncError.message||syncError}`);
-
-    const {data:gameRows,error:gamesError}=await state.sb
-      .from('games')
-      .select('*')
-      .eq('season',2026)
-      .eq('week',week);
-    if(gamesError)throw gamesError;
-
-    const refreshed=(gameRows||[]).map(fromDbGame);
-    const refreshedById=new Map(refreshed.map(g=>[g.id,g]));
-    state.games=state.games.map(g=>refreshedById.get(g.id)||g);
-
-    const grades=[];
-    for(const wager of pending){
-      const game=refreshedById.get(wager.gameId)||gameById(wager.gameId);
-      const result=gradeStraightWagerFromFinal(wager,game);
-      if(result)grades.push({wager,result});
+    const {data,error}=await state.sb.functions.invoke('trackpicks_results_sync',{
+      body:{week,gradeStraight:true}
+    });
+    if(error)throw new Error(error.message||String(error));
+    if(!data?.ok && data?.updateErrors?.length){
+      throw new Error(data.updateErrors[0]?.error||'Results sync failed.');
     }
 
-    if(!grades.length){
-      const finals=refreshed.filter(g=>g.gameCompleted).length;
-      state.pushResultsMessage=finals
+    const resultGames=Array.isArray(data?.results)?data.results:[];
+    if(resultGames.length){
+      const byId=new Map(resultGames.map(r=>[r.id,r]));
+      state.games=state.games.map(g=>{
+        const r=byId.get(g.id);
+        if(!r)return g;
+        return {
+          ...g,
+          awayScore:r.awayScore==null?g.awayScore:Number(r.awayScore),
+          homeScore:r.homeScore==null?g.homeScore:Number(r.homeScore),
+          gameCompleted:!!r.gameCompleted,
+          gameStatus:r.gameStatus||g.gameStatus||'',
+          resultsUpdatedAt:r.resultsUpdatedAt||g.resultsUpdatedAt||null
+        };
+      });
+    }
+
+    const grades=Array.isArray(data?.straightGrades)?data.straightGrades:[];
+    if(grades.length){
+      const byWager=new Map(grades.map(x=>[x.id,x.result]));
+      state.wagers.forEach(w=>{
+        const result=byWager.get(w.id);
+        if(result)w.result=result;
+      });
+    }
+
+    const graded=Number(data?.straightGraded||0);
+    const notReady=Number(data?.straightNotReady||0);
+    const failed=Number(data?.straightFailed||0);
+
+    if(graded===0){
+      state.pushResultsMessage=Number(data?.completed||0)>0
         ? 'No pending straight bets are ready to grade yet.'
         : 'No completed games are available yet.';
-      return;
+    }else{
+      state.pushResultsMessage=`${graded} straight ${graded===1?'bet':'bets'} graded${notReady>0?` · ${notReady} not ready`:''}${failed>0?` · ${failed} failed`:''}.`;
     }
-
-    const outcomes=await Promise.all(grades.map(async ({wager,result})=>{
-      const {error}=await state.sb
-        .from('wagers')
-        .update({result,updated_at:new Date().toISOString()})
-        .eq('id',wager.id)
-        .eq('user_id',state.user.id);
-      return {wager,result,error};
-    }));
-
-    let graded=0,failed=0;
-    for(const outcome of outcomes){
-      if(outcome.error){failed+=1;continue;}
-      outcome.wager.result=outcome.result;
-      graded+=1;
-    }
-
-    const untouched=pending.length-graded-failed;
-    state.pushResultsMessage=`${graded} straight ${graded===1?'bet':'bets'} graded${untouched>0?` · ${untouched} not ready`:''}${failed>0?` · ${failed} failed`:''}.`;
   }catch(err){
     state.pushResultsMessage=`Push Results failed: ${err.message||err}`;
   }finally{
