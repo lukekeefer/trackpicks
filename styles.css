@@ -431,5 +431,15 @@ html,body{min-height:100%;min-height:100dvh}
   padding:5px 7px;
   border-radius:999px;
 }
-.manual-review-icon{display:inline-block;margin-left:4px;vertical-align:1px}
+.manual-review-icon{
+  appearance:none;
+  border:0;
+  background:transparent;
+  padding:0;
+  margin-left:5px;
+  font:inherit;
+  line-height:1;
+  cursor:pointer;
+  vertical-align:1px;
+}
 .manual-review-text{color:#9a6700}
