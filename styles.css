@@ -536,3 +536,29 @@ html,body{min-height:100%;min-height:100dvh}
   .dashboard-hero-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
   .dashboard-mini-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
 }
+
+
+/* TrackPicks V2.1.2 — historical dashboard import */
+.dashboard-import-card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:14px;
+  display:grid;
+  gap:10px;
+}
+.dashboard-import-actions{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:8px;
+}
+.dashboard-import-actions button{width:100%}
+.dashboard-import-note{
+  font-size:11px;
+  line-height:1.45;
+  color:var(--muted);
+}
+.dashboard-import-message{margin:0}
+@media(min-width:520px){
+  .dashboard-import-actions{grid-template-columns:1fr 1fr}
+}

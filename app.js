@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.1';
+const BUILD_VERSION = '2.1.2.2';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -112,7 +112,7 @@ const STORAGE = {
 const WEEK_WINDOWS = {};
 (function buildWeekWindows(){
   const week4Start = new Date('2026-09-21T05:00:00Z');
-  for (let w = 4; w <= 12; w++) {
+  for (let w = 0; w <= 12; w++) {
     const start = new Date(week4Start.getTime() + (w - 4) * 7 * 24 * 60 * 60 * 1000);
     const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000 - 1000);
     WEEK_WINDOWS[w] = { start: start.toISOString().replace('.000Z','Z'), end: end.toISOString().replace('.000Z','Z') };
@@ -379,13 +379,23 @@ function dashboardSummary(tickets){
     units,roi:risked?units/risked*100:null,risked
   };
 }
+function dashboardTargetWeek(now=new Date()){
+  const start=Date.parse(WEEK_WINDOWS[4]?.start||'2026-09-21T05:00:00Z');
+  const n=Math.floor((now.getTime()-start)/(7*24*60*60*1000))+4;
+  if(n<4||n>12)return null;
+  const weekday=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short'}).format(now);
+  return weekday==='Sun'&&n<12?n+1:n;
+}
 function dashboardLastWeek(){
-  const weeks=dashboardTickets()
-    .filter(t=>isGradedResult(t.result)&&Number.isFinite(Number(t.week)))
-    .map(t=>Number(t.week));
-  const prior=weeks.filter(w=>w<Number(state.selectedWeek));
-  if(prior.length)return Math.max(...prior);
-  return null;
+  const gradedWeeks=[...new Set(
+    dashboardTickets()
+      .filter(t=>isGradedResult(t.result)&&Number.isFinite(Number(t.week)))
+      .map(t=>Number(t.week))
+  )];
+  const current=dashboardTargetWeek();
+  if(current!=null&&gradedWeeks.includes(current-1))return current-1;
+  const prior=current==null?gradedWeeks:gradedWeeks.filter(w=>w<current);
+  return prior.length?Math.max(...prior):null;
 }
 function fmtPct(v){return v==null?'—':`${v.toFixed(1)}%`;}
 function fmtUnits(v){
@@ -453,6 +463,24 @@ function renderDashboard(){
         ${renderDashboardMetric('Units',fmtUnits(last.units))}
         ${renderDashboardMetric('ROI',fmtPct(last.roi))}
       </div>`}
+    </section>
+
+    <section class="dashboard-section">
+      <div class="dashboard-section-head">
+        <div>
+          <div class="section-title">Historical Data</div>
+          <div class="dashboard-section-copy">Import prior picks or download the TrackPicks entry template.</div>
+        </div>
+      </div>
+      <div class="dashboard-import-card">
+        <div class="dashboard-import-actions">
+          <button type="button" class="primary" data-import-history>Import Data</button>
+          <button type="button" class="secondary" data-download-import-template>Download Blank Template</button>
+        </div>
+        <input type="file" data-history-file accept=".csv,.xlsx" hidden>
+        <div class="dashboard-import-note">Accepts TrackPicks CSV or XLSX files. The full file is validated before any rows are written.</div>
+        ${state.importMessage?`<div class="notice dashboard-import-message">${escapeAttr(state.importMessage)}</div>`:''}
+      </div>
     </section>
 
     <section class="dashboard-section">
@@ -544,7 +572,7 @@ async function syncFromCloud(){
   state.syncing=true; render();
   try{
     const [gamesRes,wagersRes,flagsRes,teamsRes,aliasesRes]=await Promise.all([
-      state.sb.from('games').select('*').eq('season',2026).gte('week',4).lte('week',12),
+      state.sb.from('games').select('*').eq('season',2026).gte('week',0).lte('week',12),
       state.sb.from('wagers').select('*').eq('user_id',state.user.id),
       state.sb.from('user_game_flags').select('game_id,caution').eq('user_id',state.user.id).eq('caution',true),
       state.sb.from('cfb_teams').select('espn_name,conference,subdivision,season,abbreviation,logo_url').eq('season',2026),
@@ -560,10 +588,10 @@ async function syncFromCloud(){
     state.cautionGameIds=(flagsRes.data||[]).map(r=>r.game_id);
     state.cfbTeams=(teamsRes.data||[]).map(r=>({espnName:r.espn_name,conference:r.conference,subdivision:r.subdivision,season:r.season,abbreviation:r.abbreviation||'',logoUrl:r.logo_url||''}));
     state.cfbAliases=(aliasesRes.data||[]).map(r=>({provider:r.provider,alias:r.alias,espnName:r.espn_name}));
-    const historyRes=await state.sb.from('game_odds_history').select('*').eq('season',2026).gte('week',4).lte('week',12).order('captured_at',{ascending:true});
+    const historyRes=await state.sb.from('game_odds_history').select('*').eq('season',2026).gte('week',0).lte('week',12).order('captured_at',{ascending:true});
     state.oddsHistory=historyRes.error?[]:(historyRes.data||[]).map(fromDbOddsSnapshot);
     const [parlaysRes,parlayLegsRes]=await Promise.all([
-      state.sb.from('parlays').select('*').eq('user_id',state.user.id).eq('season',2026).gte('week',4).lte('week',12).order('created_at',{ascending:true}),
+      state.sb.from('parlays').select('*').eq('user_id',state.user.id).eq('season',2026).gte('week',0).lte('week',12).order('created_at',{ascending:true}),
       state.sb.from('parlay_legs').select('*').eq('user_id',state.user.id).order('leg_order',{ascending:true})
     ]);
     state.parlays=parlaysRes.error?[]:(parlaysRes.data||[]).map(fromDbParlay);
@@ -779,11 +807,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.2 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.2 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.2.2',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.2.2';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -1165,7 +1193,7 @@ function renderSettingsSheet(){
         <div class="report-card">
           <div class="report-row">
             <select id="reportWeekSelect" class="report-select">
-              ${state.weeks.filter(w=>w.enabled).map(w=>`<option value="${w.week}" ${w.week===state.selectedWeek?'selected':''}>Week ${w.week}</option>`).join('')}
+              ${Array.from({length:13},(_,week)=>`<option value="${week}" ${week===state.selectedWeek?'selected':''}>Week ${week}</option>`).join('')}
             </select>
             <button class="secondary report-btn" data-export-report="week">Weekly CSV</button>
           </div>
@@ -1283,6 +1311,9 @@ function bind(){
   document.querySelectorAll('[data-settings]').forEach(el=>el.onclick=()=>{state.showSettings=true;render();});
   document.querySelectorAll('[data-close-settings]').forEach(el=>el.onclick=()=>{state.showSettings=false;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
+  document.querySelectorAll('[data-import-history]').forEach(el=>el.onclick=()=>document.querySelector('[data-history-file]')?.click());
+  document.querySelectorAll('[data-download-import-template]').forEach(el=>el.onclick=downloadImportTemplate);
+  document.querySelectorAll('[data-history-file]').forEach(el=>el.onchange=async()=>{const file=el.files?.[0];el.value='';if(file)await importHistoryFile(file);});
   document.querySelectorAll('[data-sync-now]').forEach(el=>el.onclick=async()=>{state.showSettings=false;await syncFromCloud();render();});
   document.querySelectorAll('[data-edit-cloud]').forEach(el=>el.onclick=()=>{localStorage.removeItem(STORAGE.supabaseUrl);localStorage.removeItem(STORAGE.supabaseKey);location.reload();});
   document.querySelectorAll('[data-save-admin-api]').forEach(el=>el.onclick=()=>{
@@ -1684,43 +1715,474 @@ function parseOddsEvent(e,week){if(!e?.id||!e.home_team||!e.away_team)return nul
 function dedupeEvents(games){const map=new Map();games.forEach(g=>{const key=`${g.away.toLowerCase()}|${g.home.toLowerCase()}|${g.commenceTime}`;if(!map.has(key))map.set(key,g);else{const p=map.get(key),ps=(hasSpread(p)?1:0)+(hasTotal(p)?1:0),ns=(hasSpread(g)?1:0)+(hasTotal(g)?1:0);if(ns>ps)map.set(key,g)}});return[...map.values()];}
 function friendlyError(err){const msg=err?.message||String(err);if(/401|unauthorized|api key/i.test(msg))return'The Odds API key was rejected. Check Settings and try again.';if(/429|quota|usage/i.test(msg))return'The Odds API request limit appears to have been reached.';if(/Failed to fetch|NetworkError/i.test(msg))return'The browser could not reach the data service. Check your connection and try again.';return msg;}
 
+
+const TRACKPICKS_IMPORT_HEADERS=[
+  'Week','Ticket ID','Ticket Type','Leg #','Matchup','Bet Type','Source Line','Line/Total',
+  'Payout Odds','Ticket Payout Odds','Who','Pick','Units','Result','Ticket Result','Caution','DDL'
+];
+
+function importCell(v){return String(v??'').trim();}
+function importKey(v){return importCell(v).toLowerCase().replace(/[^a-z0-9]+/g,'');}
+function parseImportNumber(v){
+  const s=importCell(v).replace(/^\+/,'');
+  if(!s)return null;
+  const n=Number(s);
+  return Number.isFinite(n)?n:null;
+}
+function parseImportResult(v){
+  const s=importCell(v);
+  if(!s)return '';
+  const map={pending:'Pending',win:'Win',loss:'Loss',push:'Push',ddl:'DDL'};
+  return map[s.toLowerCase()]||null;
+}
+function parseImportYesNo(v){
+  const s=importCell(v).toLowerCase();
+  if(!s)return false;
+  if(['yes','y','true','1','no','n','false','0'].includes(s))return ['yes','y','true','1'].includes(s);
+  return null;
+}
+function normalizeImportedBetType(v){
+  const s=importCell(v).toLowerCase();
+  if(s==='spread')return'Spread';
+  if(s==='total'||s==='totals')return'Total';
+  if(s==='moneyline'||s==='money line'||s==='ml')return'Moneyline';
+  return null;
+}
+function normalizeImportedTicketType(v,betType){
+  const s=importCell(v).toLowerCase();
+  if(!s && ['Spread','Total','Moneyline'].includes(betType))return'Straight'; // legacy CSV
+  if(s==='straight'||s==='single')return'Straight';
+  if(s==='parlay')return'Parlay';
+  if(s==='teaser')return'Teaser';
+  return null;
+}
+function importMatchupSides(matchup){
+  const raw=importCell(matchup).replace(/\r/g,'').trim();
+  let parts=[];
+  if(raw.includes('\n'))parts=raw.split(/\n+/);
+  else if(/\s+@\s+/.test(raw))parts=raw.split(/\s+@\s+/);
+  else if(/\s+at\s+/i.test(raw))parts=raw.split(/\s+at\s+/i);
+  parts=parts.map(s=>s.trim()).filter(Boolean);
+  if(parts.length!==2)return null;
+  const away=resolveEspnTeamName(parts[0])||parts[0];
+  const home=resolveEspnTeamName(parts[1])||parts[1];
+  return {away,home};
+}
+function historicalGameId(week,away,home){
+  const source=`2026|${week}|${normalizeTeamName(away)}|${normalizeTeamName(home)}`;
+  let h=2166136261;
+  for(let i=0;i<source.length;i++){
+    h^=source.charCodeAt(i);
+    h=Math.imul(h,16777619);
+  }
+  return `hist-2026-w${week}-${(h>>>0).toString(16).padStart(8,'0')}`;
+}
+function importedGameFor(week,matchup){
+  const sides=importMatchupSides(matchup);
+  if(!sides)return null;
+  const clean=s=>String(s||'').toLowerCase().replace(/\s+/g,' ').replace(/[’']/g,"'").trim();
+  const candidates=state.games.filter(g=>Number(g.week)===Number(week));
+  const hit=candidates.find(g=>clean(g.away)===clean(sides.away)&&clean(g.home)===clean(sides.home));
+  if(hit)return hit;
+
+  // Weeks 0–3 predate TrackPicks' live board. Create a deterministic historical
+  // game shell so imported wagers/legs can retain week + matchup relationships.
+  if(Number(week)>=0&&Number(week)<=3){
+    return {
+      id:historicalGameId(week,sides.away,sides.home),
+      sourceEventId:null,
+      sourceSportKey:'historical_import',
+      week:Number(week),
+      away:sides.away,
+      home:sides.home,
+      spreadTeam:null,
+      spread:null,
+      total:null,
+      commenceTime:WEEK_WINDOWS[week]?.start||null,
+      marketUpdatedAt:null,
+      tv:'',
+      location:'',
+      historicalImport:true
+    };
+  }
+  return null;
+}
+function importedSelection(game,betType,pick){
+  const p=importCell(pick);
+  const low=p.toLowerCase();
+  if(betType==='Total'){
+    if(/^over\b/i.test(p))return'Over';
+    if(/^under\b/i.test(p))return'Under';
+    return null;
+  }
+  const teams=[game.away,game.home].sort((a,b)=>b.length-a.length);
+  for(const team of teams){
+    const t=team.toLowerCase();
+    if(low===t||low.startsWith(`${t} `)||low.startsWith(`${t}+`)||low.startsWith(`${t}-`))return team;
+  }
+  return null;
+}
+function csvTextToMatrix(text){
+  const rows=[];let row=[],field='',quoted=false;
+  const s=String(text||'').replace(/^\uFEFF/,'');
+  for(let i=0;i<s.length;i++){
+    const ch=s[i];
+    if(quoted){
+      if(ch==='"'&&s[i+1]==='"'){field+='"';i++;}
+      else if(ch==='"')quoted=false;
+      else field+=ch;
+    }else{
+      if(ch==='"')quoted=true;
+      else if(ch===','){row.push(field);field='';}
+      else if(ch==='\n'){row.push(field);rows.push(row);row=[];field='';}
+      else if(ch!=='\r')field+=ch;
+    }
+  }
+  row.push(field);
+  if(row.some(v=>String(v).trim())||rows.length===0)rows.push(row);
+  return rows;
+}
+async function readHistoryImportFile(file){
+  const lower=String(file?.name||'').toLowerCase();
+  if(lower.endsWith('.csv')){
+    return csvTextToMatrix(await file.text());
+  }
+  if(lower.endsWith('.xlsx')){
+    if(!window.XLSX)throw new Error('The XLSX reader did not load. Check your connection and try again.');
+    const buffer=await file.arrayBuffer();
+    const wb=window.XLSX.read(buffer,{type:'array'});
+    const sheet=wb.Sheets['Import Data']||wb.Sheets[wb.SheetNames[0]];
+    return window.XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',raw:false});
+  }
+  throw new Error('Choose a .csv or .xlsx TrackPicks import file.');
+}
+function matrixToImportObjects(matrix){
+  const rows=(matrix||[]).filter(r=>Array.isArray(r)&&r.some(v=>importCell(v)));
+  if(rows.length<2)return{rows:[],legacy:false,errors:['The file has no data rows.']};
+  const headers=rows[0].map(importKey);
+  const idx={};
+  headers.forEach((h,i)=>{if(h)idx[h]=i;});
+  const get=(r,name)=>r[idx[importKey(name)]]??'';
+  const legacy=!('ticketid' in idx)&&!('tickettype' in idx);
+  const requiredLegacy=['Week','Matchup','Bet Type','Line/Total','Payout Odds','Who','Pick','Units','Result'];
+  const requiredNew=['Week','Ticket Type','Matchup','Bet Type','Line/Total','Pick','Units'];
+  const missing=(legacy?requiredLegacy:requiredNew).filter(h=>!(importKey(h) in idx));
+  if(missing.length)return{rows:[],legacy,errors:[`Missing required column(s): ${missing.join(', ')}`]};
+  return{
+    legacy,
+    errors:[],
+    rows:rows.slice(1).filter(r=>r.some(v=>importCell(v))).map((r,i)=>({
+      rowNumber:i+2,
+      week:get(r,'Week'),
+      ticketId:get(r,'Ticket ID'),
+      ticketType:get(r,'Ticket Type'),
+      legNumber:get(r,'Leg #'),
+      matchup:get(r,'Matchup'),
+      betType:get(r,'Bet Type'),
+      sourceLine:get(r,'Source Line'),
+      line:get(r,'Line/Total'),
+      payoutOdds:get(r,'Payout Odds'),
+      ticketPayoutOdds:get(r,'Ticket Payout Odds'),
+      who:get(r,'Who'),
+      pick:get(r,'Pick'),
+      units:get(r,'Units'),
+      result:get(r,'Result'),
+      ticketResult:get(r,'Ticket Result'),
+      caution:get(r,'Caution'),
+      ddl:get(r,'DDL')
+    }))
+  };
+}
+function prepareHistoryImport(parsed){
+  const errors=[...(parsed.errors||[])];
+  const straight=[];
+  const multiGroups=new Map();
+  const cautions=new Set();
+  const newGames=new Map();
+  const activeUser=state.displayName||state.user?.email||'';
+  if(!activeUser)errors.push('Your account needs a display name before importing.');
+
+  for(const raw of parsed.rows||[]){
+    const prefix=`Row ${raw.rowNumber}`;
+    const week=Number(raw.week);
+    if(!Number.isInteger(week)||week<0||week>12){errors.push(`${prefix}: Week must be 0–12.`);continue;}
+
+    const betType=normalizeImportedBetType(raw.betType);
+    if(!betType){errors.push(`${prefix}: Bet Type must be Spread, Total, or Moneyline.`);continue;}
+
+    const ticketType=normalizeImportedTicketType(raw.ticketType,betType);
+    if(!ticketType){errors.push(`${prefix}: Ticket Type must be Straight, Parlay, or Teaser.`);continue;}
+    if(parsed.legacy&&ticketType!=='Straight'){
+      errors.push(`${prefix}: legacy parlay/teaser rows cannot be rebuilt because they do not contain individual legs. Export with V2.1.2+ first.`);
+      continue;
+    }
+
+    const game=importedGameFor(week,raw.matchup);
+    if(!game){
+      const suffix=week<=3?' could not be parsed as Away @ Home.':' was not found in the TrackPicks Week '+week+' board.';
+      errors.push(`${prefix}: matchup "${importCell(raw.matchup)}"${suffix}`);
+      continue;
+    }
+    if(game.historicalImport)newGames.set(game.id,game);
+
+    const selection=importedSelection(game,betType,raw.pick);
+    if(!selection){errors.push(`${prefix}: Pick "${importCell(raw.pick)}" does not identify a valid ${betType} selection for ${game.away} @ ${game.home}.`);continue;}
+
+    const line=parseImportNumber(raw.line);
+    if(line==null&&betType!=='Moneyline'){errors.push(`${prefix}: Line/Total is required for ${betType}.`);continue;}
+
+    let payout=parseImportNumber(raw.payoutOdds);
+    if(payout==null&&(betType==='Spread'||betType==='Total'))payout=-110;
+    if(payout==null&&betType==='Moneyline'){errors.push(`${prefix}: Moneyline Payout Odds cannot be blank.`);continue;}
+
+    const units=parseImportNumber(raw.units);
+    if(units==null||units<=0){errors.push(`${prefix}: Units must be greater than 0.`);continue;}
+
+    const caution=parseImportYesNo(raw.caution);
+    const ddl=parseImportYesNo(raw.ddl);
+    if(caution==null){errors.push(`${prefix}: Caution must be Yes, No, or blank.`);continue;}
+    if(ddl==null){errors.push(`${prefix}: DDL must be Yes, No, or blank.`);continue;}
+
+    let result=parseImportResult(raw.result);
+    let ticketResult=parseImportResult(raw.ticketResult);
+    if(result===null){errors.push(`${prefix}: Result is not valid.`);continue;}
+    if(ticketResult===null){errors.push(`${prefix}: Ticket Result is not valid.`);continue;}
+    if(ddl===true)result='DDL';
+
+    const who=importCell(raw.who)||activeUser;
+    const sourceLine=parseImportNumber(raw.sourceLine);
+    const ticketPayout=parseImportNumber(raw.ticketPayoutOdds);
+
+    if(ticketType==='Straight'){
+      if(result&&ticketResult&&result!==ticketResult){
+        errors.push(`${prefix}: Result and Ticket Result conflict for a Straight bet.`);
+        continue;
+      }
+      let finalResult=result||ticketResult||'Pending';
+      if(ddl===true)finalResult='DDL';
+      const finalLine=line==null?payout:line;
+      const marketSpread=betType==='Spread'?game.spread:null;
+      const marketTotal=betType==='Total'?game.total:null;
+      straight.push({
+        id:crypto.randomUUID(),gameId:game.id,betType,selection,line:finalLine,payoutOdds:payout,
+        units,who,pick:importCell(raw.pick),result:finalResult,
+        marketSpread,marketTotal,marketMoneyline:betType==='Moneyline'?finalLine:null
+      });
+      if(caution)cautions.add(game.id);
+      continue;
+    }
+
+    const ticketId=importCell(raw.ticketId);
+    if(!ticketId){errors.push(`${prefix}: Ticket ID is required for ${ticketType}.`);continue;}
+    if(ticketType==='Teaser'&&betType==='Moneyline'){errors.push(`${prefix}: Moneyline legs are not allowed in teasers.`);continue;}
+    if(ticketPayout==null){errors.push(`${prefix}: Ticket Payout Odds is required for ${ticketType}.`);continue;}
+    if(ticketType==='Teaser'&&sourceLine==null){errors.push(`${prefix}: Source Line is required for teaser legs.`);continue;}
+
+    const key=`${week}|${ticketId}`;
+    if(!multiGroups.has(key))multiGroups.set(key,{
+      key,externalId:ticketId,week,ticketType,who,units,ticketPayout,
+      ticketResult:ticketResult||'',legs:[],cautionIds:new Set()
+    });
+    const group=multiGroups.get(key);
+    const conflicts=[
+      ['Ticket Type',group.ticketType,ticketType],
+      ['Who',group.who,who],
+      ['Units',String(group.units),String(units)],
+      ['Ticket Payout Odds',String(group.ticketPayout),String(ticketPayout)]
+    ];
+    for(const [field,a,b] of conflicts){
+      if(a!==b)errors.push(`${prefix}: ${field} conflicts with another row for Ticket ID "${ticketId}".`);
+    }
+    if(ticketResult){
+      if(group.ticketResult&&group.ticketResult!==ticketResult)errors.push(`${prefix}: Ticket Result conflicts with another row for Ticket ID "${ticketId}".`);
+      else group.ticketResult=ticketResult;
+    }
+
+    group.legs.push({
+      rowNumber:raw.rowNumber,
+      legNumber:parseImportNumber(raw.legNumber),
+      gameId:game.id,betType,selection,
+      sourceLine:sourceLine==null?line:sourceLine,
+      line:line==null?payout:line,
+      odds:payout,pick:importCell(raw.pick),result:result||'Pending'
+    });
+    if(caution)group.cautionIds.add(game.id);
+  }
+
+  for(const group of multiGroups.values()){
+    const legNums=group.legs.map(l=>l.legNumber).filter(v=>v!=null);
+    if(legNums.length&&legNums.length!==group.legs.length)errors.push(`Ticket ${group.externalId}: either fill Leg # for every leg or leave it blank for every leg.`);
+    if(legNums.length&&new Set(legNums).size!==legNums.length)errors.push(`Ticket ${group.externalId}: Leg # values must be unique.`);
+    group.legs.sort((a,b)=>(a.legNumber??999)-(b.legNumber??999)||a.rowNumber-b.rowNumber);
+    if(!group.ticketResult){
+      const results=group.legs.map(l=>l.result||'Pending');
+      if(results.some(r=>r==='Loss'||r==='DDL'))group.ticketResult='Loss';
+      else if(results.length&&results.every(r=>r==='Win'))group.ticketResult='Win';
+      else group.ticketResult='Pending';
+    }
+    if(group.ticketType==='Teaser'){
+      const diffs=group.legs
+        .filter(l=>l.sourceLine!=null&&l.line!=null)
+        .map(l=>Math.abs(Number(l.line)-Number(l.sourceLine)))
+        .filter(v=>Number.isFinite(v)&&v>0.0001);
+      if(!diffs.length)errors.push(`Ticket ${group.externalId}: teaser points could not be derived from Source Line and Line/Total.`);
+      else{
+        const rounded=diffs.map(v=>Number(v.toFixed(4)));
+        const first=rounded[0];
+        if(rounded.some(v=>Math.abs(v-first)>0.0001))errors.push(`Ticket ${group.externalId}: teaser leg adjustments do not match.`);
+        group.teaserPoints=first;
+      }
+    }else group.teaserPoints=null;
+    for(const id of group.cautionIds)cautions.add(id);
+  }
+
+  return{errors,straight,multi:[...multiGroups.values()],cautions:[...cautions],newGames:[...newGames.values()]};
+}
+async function commitHistoryImport(plan){
+  if(plan.errors.length)throw new Error('Import validation failed.');
+  if(!state.sb||!state.user)throw new Error('You must be signed in to import data.');
+
+  for(const g of plan.newGames||[]){
+    const {error}=await state.sb.rpc('trackpicks_upsert_historical_game',{
+      p_week:Number(g.week),
+      p_away:g.away,
+      p_home:g.home,
+      p_game_id:g.id,
+      p_commence_time:g.commenceTime
+    });
+    if(error)throw new Error(`Historical game ${g.away} @ ${g.home}: ${error.message}`);
+  }
+
+  if(plan.straight.length){
+    const {error}=await state.sb.from('wagers').insert(plan.straight.map(toDbWager));
+    if(error)throw new Error(`Straight bets: ${error.message}`);
+  }
+
+  const createdParlayIds=[];
+  try{
+    for(const group of plan.multi){
+      const parlayId=crypto.randomUUID();
+      const parent={
+        id:parlayId,week:group.week,who:group.who,units:group.units,odds:group.ticketPayout,
+        isTeaser:group.ticketType==='Teaser',teaserPoints:group.teaserPoints,result:group.ticketResult||'Pending'
+      };
+      const {error:parentError}=await state.sb.from('parlays').insert(toDbParlay(parent));
+      if(parentError)throw new Error(`Ticket ${group.externalId}: ${parentError.message}`);
+      createdParlayIds.push(parlayId);
+
+      const rows=group.legs.map((leg,i)=>toDbParlayLeg({
+        id:crypto.randomUUID(),gameId:leg.gameId,betType:leg.betType,selection:leg.selection,
+        sourceLine:leg.sourceLine,odds:leg.odds
+      },parlayId,i+1,leg.line,leg.result));
+      const {error:legError}=await state.sb.from('parlay_legs').insert(rows);
+      if(legError)throw new Error(`Ticket ${group.externalId} legs: ${legError.message}`);
+    }
+
+    if(plan.cautions.length){
+      const rows=plan.cautions.map(gameId=>({
+        user_id:state.user.id,game_id:gameId,caution:true,updated_at:new Date().toISOString()
+      }));
+      const {error}=await state.sb.from('user_game_flags').upsert(rows);
+      if(error)throw new Error(`Caution flags: ${error.message}`);
+    }
+  }catch(err){
+    if(createdParlayIds.length){
+      await state.sb.from('parlays').delete().in('id',createdParlayIds).eq('user_id',state.user.id);
+    }
+    throw err;
+  }
+}
+async function importHistoryFile(file){
+  if(!file)return;
+  state.importMessage=`Checking ${file.name}…`;render();
+  try{
+    const matrix=await readHistoryImportFile(file);
+    const parsed=matrixToImportObjects(matrix);
+    const plan=prepareHistoryImport(parsed);
+    if(plan.errors.length){
+      const shown=plan.errors.slice(0,12);
+      const extra=plan.errors.length-shown.length;
+      state.importMessage=`Import blocked: ${plan.errors.length} issue${plan.errors.length===1?'':'s'} found.`;
+      alert(`Nothing was imported. Fix these issues first:\n\n${shown.join('\n')}${extra>0?`\n\n…and ${extra} more.`:''}`);
+      render();
+      return;
+    }
+    const count=plan.straight.length+plan.multi.length;
+    const legCount=plan.multi.reduce((n,g)=>n+g.legs.length,0);
+    if(!count){state.importMessage='No importable picks were found.';render();return;}
+    const historicalCount=(plan.newGames||[]).length;
+    const historicalNote=historicalCount?`\n${historicalCount} historical Week 0–3 matchup${historicalCount===1?'':'s'} will be linked for analytics.`:'';
+    const ok=confirm(`Import ${plan.straight.length} straight bet${plan.straight.length===1?'':'s'} and ${plan.multi.length} parlay/teaser ticket${plan.multi.length===1?'':'s'} (${legCount} legs)?${historicalNote}`);
+    if(!ok){state.importMessage='Import canceled. No data was changed.';render();return;}
+    await commitHistoryImport(plan);
+    await syncFromCloud();
+    state.importMessage=`Imported ${plan.straight.length} straight bet${plan.straight.length===1?'':'s'} and ${plan.multi.length} parlay/teaser ticket${plan.multi.length===1?'':'s'} successfully.`;
+    render();
+  }catch(err){
+    state.importMessage=`Import failed: ${err.message||err}`;
+    alert(state.importMessage);
+    render();
+  }
+}
+function downloadImportTemplate(){
+  const a=document.createElement('a');
+  a.href=`TrackPicks_Import_Template.xlsx?v=${BUILD_VERSION}`;
+  a.download='TrackPicks_Import_Template.xlsx';
+  document.body.appendChild(a);a.click();a.remove();
+}
+
+
 function gradedParlaysForWeek(week){ return weekParlays(week).filter(p=>isGradedResult(p.result)); }
 function csvRowsForWagers(wagers,parlays=[]){
-  const rows=[['Week','Matchup','Bet Type','Line/Total','Payout Odds','Who','Pick','Units','Result','Caution','DDL']];
+  const rows=[TRACKPICKS_IMPORT_HEADERS];
   wagers.forEach(w=>{
     const g=gameById(w.gameId);
     if(!g)return;
     rows.push([
       g.week,
-      `${g.away}\n${g.home}`,
+      w.id,
+      'Straight',
+      '',
+      `${g.away} @ ${g.home}`,
       w.betType,
       w.line,
+      w.line,
+      formatAmericanOdds(w.payoutOdds),
       formatAmericanOdds(w.payoutOdds),
       w.who,
       w.pick,
       Number(w.units),
-      normalizedResult(w.result),
+      w.result||'Pending',
+      w.result||'Pending',
       isCautioned(g.id)?'Yes':'',
       isDDLResult(w.result)?'Yes':''
     ]);
   });
   parlays.forEach(p=>{
-    const legs=legsForParlay(p.id);
-    const matchups=legs.map(l=>{const g=gameById(l.gameId);return g?`${g.away} @ ${g.home}`:'';}).filter(Boolean).join(' | ');
-    const picks=legs.map(l=>l.pick).filter(Boolean).join(' | ');
-    rows.push([
-      p.week,
-      matchups,
-      p.isTeaser?'Teaser':'Parlay',
-      '',
-      formatAmericanOdds(p.odds),
-      p.who,
-      picks,
-      Number(p.units),
-      normalizedResult(p.result),
-      '',
-      isDDLResult(p.result)?'Yes':''
-    ]);
+    const legs=legsForParlay(p.id).sort((a,b)=>a.legOrder-b.legOrder);
+    legs.forEach((l,i)=>{
+      const g=gameById(l.gameId);
+      if(!g)return;
+      rows.push([
+        p.week,
+        p.id,
+        p.isTeaser?'Teaser':'Parlay',
+        i+1,
+        `${g.away} @ ${g.home}`,
+        l.betType,
+        l.sourceLine==null?l.line:l.sourceLine,
+        l.line,
+        l.odds==null?'':formatAmericanOdds(l.odds),
+        formatAmericanOdds(p.odds),
+        p.who,
+        l.pick,
+        Number(p.units),
+        l.result||'Pending',
+        p.result||'Pending',
+        isCautioned(g.id)?'Yes':'',
+        isDDLResult(l.result)?'Yes':''
+      ]);
+    });
   });
   return rows;
 }
