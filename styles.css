@@ -920,3 +920,8 @@ html,body{min-height:100%;min-height:100dvh}
   width:100%;
   text-align:center;
 }
+
+
+/* TrackPicks V2.2.0 — Full Slate redesign foundation.
+   This release prepares team/logo/abbreviation and movement-signal logic.
+   Existing game-card markup is intentionally unchanged until V2.2.1. */
