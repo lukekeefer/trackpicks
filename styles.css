@@ -925,3 +925,244 @@ html,body{min-height:100%;min-height:100dvh}
 /* TrackPicks V2.2.0 — Full Slate redesign foundation.
    This release prepares team/logo/abbreviation and movement-signal logic.
    Existing game-card markup is intentionally unchanged until V2.2.1. */
+
+
+/* TrackPicks V2.2.1 — Full Slate matchup-first game cards */
+.slate-game-list{
+  gap:12px;
+}
+.game-row.slate-game-card{
+  position:relative;
+  display:block;
+  padding:14px;
+  overflow:hidden;
+  cursor:pointer;
+  box-shadow:0 3px 12px rgba(17,24,39,.05);
+}
+.game-row.slate-game-card.saved{
+  border-color:#9ca3af;
+  box-shadow:0 0 0 2px rgba(17,24,39,.05),0 3px 12px rgba(17,24,39,.05);
+}
+.game-row.slate-game-card.cautioned{
+  border-color:#d97706;
+  background:#fffdf7;
+}
+.slate-matchup{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);
+  align-items:center;
+  gap:8px;
+  padding:2px 0 13px;
+}
+.slate-team{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:9px;
+}
+.slate-team-home{
+  flex-direction:row-reverse;
+  text-align:right;
+}
+.slate-team-logo{
+  width:42px;
+  height:42px;
+  object-fit:contain;
+  flex:0 0 42px;
+}
+.slate-team-logo-fallback{
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:#f3f4f6;
+  color:#374151;
+  font-size:11px;
+  font-weight:900;
+}
+.slate-team-copy{
+  min-width:0;
+}
+.slate-team-name{
+  font-size:15px;
+  line-height:1.12;
+  font-weight:900;
+  color:var(--text);
+  overflow-wrap:anywhere;
+}
+.slate-team-abbr{
+  margin-top:3px;
+  color:var(--muted);
+  font-size:10px;
+  font-weight:850;
+  letter-spacing:.08em;
+}
+.slate-at{
+  text-align:center;
+  color:#9ca3af;
+  font-size:13px;
+  font-weight:900;
+}
+.slate-markets{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
+.slate-market-box{
+  min-width:0;
+  min-height:48px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:9px 10px;
+  background:#f9fafb;
+}
+.slate-market-label{
+  flex:0 0 auto;
+  color:var(--muted);
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.slate-market-value{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:5px;
+  font-size:14px;
+  color:var(--text);
+}
+.slate-market-value strong{
+  white-space:nowrap;
+  font-size:15px;
+}
+.slate-market-logo{
+  width:20px;
+  height:20px;
+  object-fit:contain;
+  flex:0 0 20px;
+}
+.slate-market-logo-fallback{
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:#e5e7eb;
+  font-size:7px;
+  font-weight:900;
+}
+.slate-market-abbr{
+  min-width:0;
+  max-width:54px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:11px;
+  font-weight:900;
+}
+.slate-market-missing{
+  color:var(--muted);
+}
+.slate-market-missing strong{
+  font-size:11px;
+  font-weight:800;
+}
+.market-move{
+  display:inline-grid;
+  place-items:center;
+  width:18px;
+  height:18px;
+  border-radius:999px;
+  font-size:15px;
+  font-weight:950;
+  line-height:1;
+}
+.market-move-up{
+  color:#15803d;
+  background:#dcfce7;
+}
+.market-move-down{
+  color:#b91c1c;
+  background:#fee2e2;
+}
+.slate-card-footer{
+  margin-top:10px;
+  padding-top:9px;
+  border-top:1px solid #eef0f3;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+}
+.slate-kickoff{
+  min-width:0;
+  display:flex;
+  align-items:baseline;
+  gap:5px;
+  font-size:11px;
+  color:var(--muted);
+}
+.slate-kickoff strong{
+  color:#374151;
+  font-size:11px;
+}
+.slate-tv{
+  min-width:42px;
+  max-width:92px;
+  height:20px;
+  display:flex;
+  justify-content:flex-end;
+  align-items:center;
+}
+.slate-tv .tv-network-logo-img{
+  max-width:72px;
+  max-height:18px;
+  width:auto;
+  height:auto;
+  object-fit:contain;
+}
+.slate-tv .tv-network-fallback{
+  font-size:10px;
+  color:var(--muted);
+  font-weight:850;
+  white-space:nowrap;
+}
+.slate-status-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:5px;
+  margin-top:8px;
+}
+.slate-status{
+  display:inline-flex;
+  align-items:center;
+  border-radius:999px;
+  padding:3px 7px;
+  font-size:10px;
+  font-weight:850;
+}
+.slate-status-saved{
+  background:#f3f4f6;
+  color:#374151;
+}
+.slate-status-caution{
+  background:#fef3c7;
+  color:#92400e;
+}
+.slate-status-missing{
+  background:#fff7ed;
+  color:#9a3412;
+}
+@media(max-width:390px){
+  .game-row.slate-game-card{padding:12px}
+  .slate-team-logo{width:38px;height:38px;flex-basis:38px}
+  .slate-team-name{font-size:13px}
+  .slate-markets{gap:6px}
+  .slate-market-box{padding:8px;gap:5px}
+  .slate-market-logo{width:18px;height:18px;flex-basis:18px}
+  .slate-market-abbr{max-width:42px;font-size:10px}
+  .slate-market-value strong{font-size:14px}
+}

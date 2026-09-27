@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.0';
+const BUILD_VERSION = '2.2.1';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -904,6 +904,65 @@ function cardTeamLogo(name){
   return teamMetaFor(name)?.logoUrl||'';
 }
 
+
+function renderSlateTeamHero(name,side){
+  const meta=teamMetaFor(name);
+  const abbr=meta?.abbreviation||teamMonogram(name);
+  const logo=meta?.logoUrl
+    ? `<img class="slate-team-logo" src="${escapeAttr(meta.logoUrl)}" alt="" loading="lazy">`
+    : `<div class="slate-team-logo slate-team-logo-fallback" aria-hidden="true">${escapeAttr(abbr)}</div>`;
+  return `<div class="slate-team slate-team-${side}">
+    ${logo}
+    <div class="slate-team-copy">
+      <div class="slate-team-name">${escapeAttr(name)}</div>
+      <div class="slate-team-abbr">${escapeAttr(abbr)}</div>
+    </div>
+  </div>`;
+}
+function renderMovementArrow(signal,label){
+  if(signal==='up')return `<span class="market-move market-move-up" aria-label="${escapeAttr(label)} strengthening">↑</span>`;
+  if(signal==='down')return `<span class="market-move market-move-down" aria-label="${escapeAttr(label)} weakening">↓</span>`;
+  return '';
+}
+function renderSlateSpreadBlock(g,signals){
+  if(!hasSpread(g))return `<div class="slate-market-box slate-market-missing">
+    <span class="slate-market-label">Spread</span>
+    <strong>Unavailable</strong>
+  </div>`;
+  const team=cardSpreadTeam(g);
+  const line=cardSpreadValue(g);
+  const meta=teamMetaFor(team);
+  const abbr=meta?.abbreviation||teamMonogram(team);
+  const logo=meta?.logoUrl
+    ? `<img class="slate-market-logo" src="${escapeAttr(meta.logoUrl)}" alt="" loading="lazy">`
+    : `<span class="slate-market-logo slate-market-logo-fallback">${escapeAttr(abbr)}</span>`;
+  return `<div class="slate-market-box">
+    <span class="slate-market-label">Spread</span>
+    <span class="slate-market-value">${logo}<span class="slate-market-abbr">${escapeAttr(abbr)}</span><strong>${signed(line)}</strong>${renderMovementArrow(signals.spread,team)}</span>
+  </div>`;
+}
+function renderSlateTotalBlock(g,signals){
+  if(!hasTotal(g))return `<div class="slate-market-box slate-market-missing">
+    <span class="slate-market-label">O/U</span>
+    <strong>Unavailable</strong>
+  </div>`;
+  return `<div class="slate-market-box">
+    <span class="slate-market-label">O/U</span>
+    <span class="slate-market-value slate-total-value"><strong>${escapeAttr(String(g.total))}</strong>${signals.total==='up'
+      ? `<span class="market-move market-move-up" aria-label="Total rising">↑</span>`
+      : signals.total==='down'
+        ? `<span class="market-move market-move-down" aria-label="Total falling">↓</span>`
+        : ''}</span>
+  </div>`;
+}
+function renderSlateStatus(saved,caution,missing){
+  const bits=[];
+  if(saved)bits.push(`<span class="slate-status slate-status-saved">${saved} saved</span>`);
+  if(caution)bits.push(`<span class="slate-status slate-status-caution">⚠ Caution</span>`);
+  if(missing)bits.push(`<span class="slate-status slate-status-missing">Missing market</span>`);
+  return bits.length?`<div class="slate-status-row">${bits.join('')}</div>`:'';
+}
+
 function movementForGame(g){
   const history=oddsHistoryForGame(g.id);
   if(!history.length)return null;
@@ -1105,11 +1164,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.0 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.1 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.0 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.1 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.2.0',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.2.0';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.2.1',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.2.1';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -1118,17 +1177,38 @@ function renderMarket(){
         games=filteredSlateGames(),
         message=state.importMessage?`<div class="notice">${state.importMessage}</div>`:'',
         filters=renderSlateFilters();
+
   if(!allGames.length)return `${message}${filters}<div class="empty"><strong>No games loaded for Week ${state.selectedWeek}.</strong><br><br>${state.isAdmin?'Tap <b>Load Week</b> to pull the current DraftKings slate.':'The weekly board has not been published yet.'}</div>`;
   if(!games.length)return `${message}${filters}<div class="empty compact-empty">No games match this slate filter.</div>`;
-  return `${message}${filters}<div class="game-list">${games.map(g=>{
-    const saved=wagersForGame(g.id).length,k=formatKickoff(g.commenceTime),caution=isCautioned(g.id),movement=movementSummary(g);
-    return `<button class="game-row ${saved?'saved':''} ${caution?'cautioned':''}" data-game="${g.id}">
-      <div class="game-matchup">${caution?'<span class="caution-icon">⚠️</span> ':''}${g.away} @ ${g.home}</div>
-      <div class="game-market">${marketSummary(g)}</div>
-      ${movement?`<div class="line-movement">↔ ${movement}</div>`:''}
-      <div class="game-kickoff">${k.date} · ${k.time}</div>
-      ${saved?`<span class="badge">${saved} saved</span>`:''}
-      ${(!hasSpread(g)||!hasTotal(g))?'<span class="warning-badge">Missing market</span>':''}
+
+  return `${message}${filters}<div class="game-list slate-game-list">${games.map(g=>{
+    const saved=wagersForGame(g.id).length;
+    const k=formatKickoff(g.commenceTime);
+    const caution=isCautioned(g.id);
+    const signals=cardMovementSignals(g);
+    const missing=!hasSpread(g)||!hasTotal(g);
+
+    return `<button class="game-row slate-game-card ${saved?'saved':''} ${caution?'cautioned':''}" data-game="${g.id}">
+      <div class="slate-matchup">
+        ${renderSlateTeamHero(g.away,'away')}
+        <div class="slate-at" aria-hidden="true">@</div>
+        ${renderSlateTeamHero(g.home,'home')}
+      </div>
+
+      <div class="slate-markets">
+        ${renderSlateSpreadBlock(g,signals)}
+        ${renderSlateTotalBlock(g,signals)}
+      </div>
+
+      <div class="slate-card-footer">
+        <div class="slate-kickoff">
+          <strong>${escapeAttr(k.date)}</strong>
+          <span>${escapeAttr(k.time||'Time TBD')}</span>
+        </div>
+        <div class="slate-tv">${renderTvNetworkLogo(g.tv||'')}</div>
+      </div>
+
+      ${renderSlateStatus(saved,caution,missing)}
     </button>`;
   }).join('')}</div>`;
 }
