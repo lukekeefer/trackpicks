@@ -562,3 +562,48 @@ html,body{min-height:100%;min-height:100dvh}
 @media(min-width:520px){
   .dashboard-import-actions{grid-template-columns:1fr 1fr}
 }
+
+
+/* TrackPicks V2.1.2.5 — import manager */
+.dashboard-manage-imports{grid-column:1/-1}
+.import-manager-overlay{z-index:80}
+.import-manager-sheet{max-height:84vh}
+.import-history-list{display:grid;gap:10px;margin-top:8px}
+.import-history-card{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:13px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:#fff;
+}
+.import-history-main{min-width:0;display:grid;gap:4px}
+.import-history-file{
+  font-size:14px;
+  font-weight:850;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.import-history-time{font-size:11px;color:var(--muted)}
+.import-history-stats{font-size:12px;line-height:1.4;color:var(--text)}
+.import-delete-btn{
+  flex:0 0 auto;
+  margin:0;
+  padding:9px 11px;
+}
+.import-delete-btn:disabled{opacity:.5;cursor:not-allowed}
+.import-manager-note{
+  margin-top:14px;
+  padding-top:12px;
+  border-top:1px solid var(--line);
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.45;
+}
+@media(max-width:520px){
+  .import-history-card{align-items:flex-start}
+  .import-history-file{white-space:normal}
+}

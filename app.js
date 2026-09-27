@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.1.2.4';
+const BUILD_VERSION = '2.1.2.5';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -127,6 +127,7 @@ const state = {
   isAdmin: false,
   view: 'weeks', selectedWeek: 4, activeGameId: null, editWagerId: null,
   saving: false, loadingWeek: false, syncing: false, showSettings: false,
+  showImportManager: false, importBatches: [], importManagerLoading: false, deletingImportBatchId: null,
   importMessage: '', authMessage: '', authMode: 'signin',
   apiKey: localStorage.getItem(STORAGE.apiKey) || '',
   apiUsage: JSON.parse(localStorage.getItem(STORAGE.apiUsage) || 'null'),
@@ -476,6 +477,7 @@ function renderDashboard(){
         <div class="dashboard-import-actions">
           <button type="button" class="primary" data-import-history>Import Data</button>
           <button type="button" class="secondary" data-download-import-template>Download Blank Template</button>
+          <button type="button" class="secondary dashboard-manage-imports" data-manage-imports>Delete Import</button>
         </div>
         <input type="file" data-history-file accept=".csv,.xlsx" hidden>
         <div class="dashboard-import-note">Accepts TrackPicks CSV or XLSX files. Line fields may be numeric (-8.5) or Pick-style (TCU -8.5). The full file is validated before any rows are written.</div>
@@ -803,15 +805,15 @@ function render(){
   if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
   if(!cloudConfigured()){ app.innerHTML=renderCloudSetup(); bindAuth(); return; }
   if(!state.user){ app.innerHTML=renderAuth(); bindAuth(); return; }
-  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main>${bottomNav()}</div>${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.historyChartKind?renderHistoryChart():''}`;
+  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main>${bottomNav()}</div>${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.historyChartKind?renderHistoryChart():''}`;
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.4 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.5 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.4 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.5 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.2.4',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.2.4';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.2.5',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.2.5';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -1314,6 +1316,9 @@ function bind(){
   document.querySelectorAll('[data-import-history]').forEach(el=>el.onclick=()=>document.querySelector('[data-history-file]')?.click());
   document.querySelectorAll('[data-download-import-template]').forEach(el=>el.onclick=downloadImportTemplate);
   document.querySelectorAll('[data-history-file]').forEach(el=>el.onchange=async()=>{const file=el.files?.[0];el.value='';if(file)await importHistoryFile(file);});
+  document.querySelectorAll('[data-manage-imports]').forEach(el=>el.onclick=openImportManager);
+  document.querySelectorAll('[data-close-import-manager]').forEach(el=>el.onclick=()=>{if(state.deletingImportBatchId)return;state.showImportManager=false;render();});
+  document.querySelectorAll('[data-delete-import]').forEach(el=>el.onclick=()=>deleteImportBatch(el.dataset.deleteImport));
   document.querySelectorAll('[data-sync-now]').forEach(el=>el.onclick=async()=>{state.showSettings=false;await syncFromCloud();render();});
   document.querySelectorAll('[data-edit-cloud]').forEach(el=>el.onclick=()=>{localStorage.removeItem(STORAGE.supabaseUrl);localStorage.removeItem(STORAGE.supabaseKey);location.reload();});
   document.querySelectorAll('[data-save-admin-api]').forEach(el=>el.onclick=()=>{
@@ -2150,6 +2155,120 @@ async function importHistoryFile(file){
     render();
   }
 }
+
+function formatImportTimestamp(value){
+  if(!value)return'Unknown time';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return'Unknown time';
+  return new Intl.DateTimeFormat(undefined,{
+    month:'short',day:'numeric',year:'numeric',
+    hour:'numeric',minute:'2-digit'
+  }).format(d);
+}
+function importBatchTypeCounts(batchId){
+  const tickets=state.parlays.filter(p=>p.importBatchId===batchId);
+  return {
+    parlays:tickets.filter(p=>!p.isTeaser).length,
+    teasers:tickets.filter(p=>p.isTeaser).length
+  };
+}
+async function loadImportBatches(){
+  if(!state.sb||!state.user)return;
+  state.importManagerLoading=true;
+  render();
+  const {data,error}=await state.sb
+    .from('import_batches')
+    .select('id,file_name,straight_count,multi_ticket_count,leg_count,created_at')
+    .eq('user_id',state.user.id)
+    .order('created_at',{ascending:false});
+  state.importManagerLoading=false;
+  if(error){
+    state.importBatches=[];
+    alert(`Could not load imports: ${error.message}`);
+    render();
+    return;
+  }
+  state.importBatches=data||[];
+  render();
+}
+function renderImportManager(){
+  const rows=state.importBatches||[];
+  const body=state.importManagerLoading
+    ? `<div class="dashboard-empty">Loading imports…</div>`
+    : !rows.length
+      ? `<div class="dashboard-empty">No imports found for this account.</div>`
+      : `<div class="import-history-list">${rows.map(b=>{
+          const counts=importBatchTypeCounts(b.id);
+          const stats=[
+            `${Number(b.straight_count)||0} straight`,
+            `${counts.parlays} parlay${counts.parlays===1?'':'s'}`,
+            `${counts.teasers} teaser${counts.teasers===1?'':'s'}`,
+            `${Number(b.leg_count)||0} leg${Number(b.leg_count)===1?'':'s'}`
+          ].join(' · ');
+          const deleting=state.deletingImportBatchId===b.id;
+          return `<article class="import-history-card">
+            <div class="import-history-main">
+              <div class="import-history-file">${escapeAttr(b.file_name||'Imported data')}</div>
+              <div class="import-history-time">${escapeAttr(formatImportTimestamp(b.created_at))}</div>
+              <div class="import-history-stats">${escapeAttr(stats)}</div>
+            </div>
+            <button type="button" class="danger-outline import-delete-btn" data-delete-import="${b.id}" ${deleting?'disabled':''}>${deleting?'Deleting…':'Delete'}</button>
+          </article>`;
+        }).join('')}</div>`;
+
+  return `<div class="overlay import-manager-overlay">
+    <section class="sheet import-manager-sheet">
+      <div class="sheet-handle"></div>
+      <div class="close-row">
+        <div>
+          <h2 style="margin:0">Delete Import</h2>
+          <div class="detail-meta">Choose an uploaded file to remove its imported picks.</div>
+        </div>
+        <button class="icon-btn" data-close-import-manager>✕</button>
+      </div>
+      ${body}
+      <div class="import-manager-note">Deleting an import removes the straight wagers, parlays, teasers, and their legs created by that upload. Other picks are left alone.</div>
+    </section>
+  </div>`;
+}
+async function deleteImportBatch(batchId){
+  if(!batchId||state.deletingImportBatchId)return;
+  const batch=state.importBatches.find(b=>b.id===batchId);
+  if(!batch)return;
+
+  const counts=importBatchTypeCounts(batchId);
+  const summary=[
+    `${Number(batch.straight_count)||0} straight`,
+    `${counts.parlays} parlay${counts.parlays===1?'':'s'}`,
+    `${counts.teasers} teaser${counts.teasers===1?'':'s'}`
+  ].join(', ');
+
+  if(!confirm(`Delete "${batch.file_name||'this import'}"?\n\nUploaded ${formatImportTimestamp(batch.created_at)}\n${summary}\n\nThis cannot be undone.`))return;
+
+  state.deletingImportBatchId=batchId;
+  render();
+
+  const {data,error}=await state.sb.rpc('trackpicks_delete_import_batch',{p_batch_id:batchId});
+  if(error){
+    state.deletingImportBatchId=null;
+    alert(`Could not delete import: ${error.message}`);
+    render();
+    return;
+  }
+
+  await syncFromCloud();
+  state.importBatches=state.importBatches.filter(b=>b.id!==batchId);
+  state.deletingImportBatchId=null;
+  state.importMessage=`Deleted import ${batch.file_name||batchId.slice(0,8)}.`;
+  render();
+}
+async function openImportManager(){
+  state.showImportManager=true;
+  state.importBatches=[];
+  render();
+  await loadImportBatches();
+}
+
 function downloadImportTemplate(){
   const a=document.createElement('a');
   a.href=`TrackPicks_Import_Template.xlsx?v=${BUILD_VERSION}`;
