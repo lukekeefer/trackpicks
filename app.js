@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.1.2.3';
+const BUILD_VERSION = '2.1.2.4';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -675,10 +675,10 @@ function renderHistoryChart(){
   const moveLabel=delta==null?'—':`${delta>0?'+':''}${Number(delta.toFixed(1))} pts`;
   return `<div class="overlay history-overlay"><section class="history-sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${kind} History</h2><div class="detail-meta">${g.away} @ ${g.home} · DraftKings</div></div><button class="icon-btn" data-close-history>✕</button></div><div class="chart-summary"><div><span>First captured</span><strong>${firstLabel}</strong></div><div><span>Current</span><strong>${currentLabel}</strong></div><div><span>Net move</span><strong>${moveLabel}</strong></div></div>${renderHistorySvg(points,kind,g)}<div class="chart-note">${points.length} captured snapshot${points.length===1?'':'s'} · TrackPicks first-captured line, not an official sportsbook opener.</div></section></div>`;
 }
-function fromDbWager(r){ return {id:r.id,gameId:r.game_id,betType:r.bet_type,selection:r.selection,line:Number(r.line),payoutOdds:r.payout_odds==null?-110:Number(r.payout_odds),units:Number(r.units),who:r.who,pick:r.pick,result:r.result||'Pending',marketSpread:r.market_spread==null?null:Number(r.market_spread),marketTotal:r.market_total==null?null:Number(r.market_total),marketMoneyline:r.market_moneyline==null?null:Number(r.market_moneyline)}; }
-function toDbWager(w){ return {id:w.id,user_id:state.user.id,game_id:w.gameId,bet_type:w.betType,selection:w.selection,line:w.line,payout_odds:w.payoutOdds,units:w.units,who:w.who,pick:w.pick,result:w.result||'Pending',market_spread:w.marketSpread,market_total:w.marketTotal,market_moneyline:w.marketMoneyline,updated_at:new Date().toISOString()}; }
-function fromDbParlay(r){ return {id:r.id,week:Number(r.week),who:r.who,units:Number(r.units),odds:Number(r.odds),isTeaser:!!r.is_teaser,teaserPoints:r.teaser_points==null?null:Number(r.teaser_points),result:r.result||'Pending',createdAt:r.created_at}; }
-function toDbParlay(p){ return {id:p.id,user_id:state.user.id,season:2026,week:p.week,who:p.who,units:p.units,odds:p.odds,is_teaser:p.isTeaser,teaser_points:p.isTeaser?p.teaserPoints:null,result:p.result||'Pending',updated_at:new Date().toISOString()}; }
+function fromDbWager(r){ return {id:r.id,gameId:r.game_id,betType:r.bet_type,selection:r.selection,line:Number(r.line),payoutOdds:r.payout_odds==null?-110:Number(r.payout_odds),units:Number(r.units),who:r.who,pick:r.pick,result:r.result||'Pending',marketSpread:r.market_spread==null?null:Number(r.market_spread),marketTotal:r.market_total==null?null:Number(r.market_total),marketMoneyline:r.market_moneyline==null?null:Number(r.market_moneyline),importBatchId:r.import_batch_id||null}; }
+function toDbWager(w){ return {id:w.id,user_id:state.user.id,game_id:w.gameId,bet_type:w.betType,selection:w.selection,line:w.line,payout_odds:w.payoutOdds,units:w.units,who:w.who,pick:w.pick,result:w.result||'Pending',market_spread:w.marketSpread,market_total:w.marketTotal,market_moneyline:w.marketMoneyline,import_batch_id:w.importBatchId||null,updated_at:new Date().toISOString()}; }
+function fromDbParlay(r){ return {id:r.id,week:Number(r.week),who:r.who,units:Number(r.units),odds:Number(r.odds),isTeaser:!!r.is_teaser,teaserPoints:r.teaser_points==null?null:Number(r.teaser_points),result:r.result||'Pending',createdAt:r.created_at,importBatchId:r.import_batch_id||null}; }
+function toDbParlay(p){ return {id:p.id,user_id:state.user.id,season:2026,week:p.week,who:p.who,units:p.units,odds:p.odds,is_teaser:p.isTeaser,teaser_points:p.isTeaser?p.teaserPoints:null,result:p.result||'Pending',import_batch_id:p.importBatchId||null,updated_at:new Date().toISOString()}; }
 function fromDbParlayLeg(r){ return {id:r.id,parlayId:r.parlay_id,gameId:r.game_id,legOrder:Number(r.leg_order),betType:r.bet_type,selection:r.selection,sourceLine:r.source_line==null?null:Number(r.source_line),line:r.line==null?null:Number(r.line),odds:r.odds==null?null:Number(r.odds),pick:r.pick,result:r.result||'Pending'}; }
 function toDbParlayLeg(leg,parlayId,legOrder,finalLine,result='Pending'){
   const pick=leg.betType==='Spread'?`${leg.selection} ${signed(finalLine)}`:leg.betType==='Moneyline'?`${leg.selection} ${formatAmericanOdds(finalLine)}`:`${leg.selection} ${finalLine}`;
@@ -807,11 +807,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.4 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.4 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.2.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.2.3';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.2.4',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.2.4';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -2046,37 +2046,51 @@ function prepareHistoryImport(parsed){
 
   return{errors,straight,multi:[...multiGroups.values()],cautions:[...cautions],newGames:[...newGames.values()]};
 }
-async function commitHistoryImport(plan){
+async function commitHistoryImport(plan,fileName=''){
   if(plan.errors.length)throw new Error('Import validation failed.');
   if(!state.sb||!state.user)throw new Error('You must be signed in to import data.');
 
-  for(const g of plan.newGames||[]){
-    const {error}=await state.sb.rpc('trackpicks_upsert_historical_game',{
-      p_week:Number(g.week),
-      p_away:g.away,
-      p_home:g.home,
-      p_game_id:g.id,
-      p_commence_time:g.commenceTime
-    });
-    if(error)throw new Error(`Historical game ${g.away} @ ${g.home}: ${error.message}`);
-  }
+  const batchId=crypto.randomUUID();
+  const batchRow={
+    id:batchId,
+    user_id:state.user.id,
+    file_name:importCell(fileName)||null,
+    straight_count:plan.straight.length,
+    multi_ticket_count:plan.multi.length,
+    leg_count:plan.multi.reduce((n,g)=>n+g.legs.length,0)
+  };
 
-  if(plan.straight.length){
-    const {error}=await state.sb.from('wagers').insert(plan.straight.map(toDbWager));
-    if(error)throw new Error(`Straight bets: ${error.message}`);
-  }
+  const {error:batchError}=await state.sb.from('import_batches').insert(batchRow);
+  if(batchError)throw new Error(`Import batch: ${batchError.message}`);
 
-  const createdParlayIds=[];
   try{
+    for(const g of plan.newGames||[]){
+      const {error}=await state.sb.rpc('trackpicks_upsert_historical_game',{
+        p_week:Number(g.week),
+        p_away:g.away,
+        p_home:g.home,
+        p_game_id:g.id,
+        p_commence_time:g.commenceTime
+      });
+      if(error)throw new Error(`Historical game ${g.away} @ ${g.home}: ${error.message}`);
+    }
+
+    if(plan.straight.length){
+      const {error}=await state.sb.from('wagers').insert(
+        plan.straight.map(w=>toDbWager({...w,importBatchId:batchId}))
+      );
+      if(error)throw new Error(`Straight bets: ${error.message}`);
+    }
+
     for(const group of plan.multi){
       const parlayId=crypto.randomUUID();
       const parent={
         id:parlayId,week:group.week,who:group.who,units:group.units,odds:group.ticketPayout,
-        isTeaser:group.ticketType==='Teaser',teaserPoints:group.teaserPoints,result:group.ticketResult||'Pending'
+        isTeaser:group.ticketType==='Teaser',teaserPoints:group.teaserPoints,
+        result:group.ticketResult||'Pending',importBatchId:batchId
       };
       const {error:parentError}=await state.sb.from('parlays').insert(toDbParlay(parent));
       if(parentError)throw new Error(`Ticket ${group.externalId}: ${parentError.message}`);
-      createdParlayIds.push(parlayId);
 
       const rows=group.legs.map((leg,i)=>toDbParlayLeg({
         id:crypto.randomUUID(),gameId:leg.gameId,betType:leg.betType,selection:leg.selection,
@@ -2093,10 +2107,14 @@ async function commitHistoryImport(plan){
       const {error}=await state.sb.from('user_game_flags').upsert(rows);
       if(error)throw new Error(`Caution flags: ${error.message}`);
     }
+
+    return batchId;
   }catch(err){
-    if(createdParlayIds.length){
-      await state.sb.from('parlays').delete().in('id',createdParlayIds).eq('user_id',state.user.id);
-    }
+    // Everything created by this upload is tagged with the same batch ID,
+    // so a failed import can clean itself up safely.
+    await state.sb.from('parlays').delete().eq('user_id',state.user.id).eq('import_batch_id',batchId);
+    await state.sb.from('wagers').delete().eq('user_id',state.user.id).eq('import_batch_id',batchId);
+    await state.sb.from('import_batches').delete().eq('user_id',state.user.id).eq('id',batchId);
     throw err;
   }
 }
@@ -2122,9 +2140,9 @@ async function importHistoryFile(file){
     const historicalNote=historicalCount?`\n${historicalCount} historical Week 0–3 matchup${historicalCount===1?'':'s'} will be linked for analytics.`:'';
     const ok=confirm(`Import ${plan.straight.length} straight bet${plan.straight.length===1?'':'s'} and ${plan.multi.length} parlay/teaser ticket${plan.multi.length===1?'':'s'} (${legCount} legs)?${historicalNote}`);
     if(!ok){state.importMessage='Import canceled. No data was changed.';render();return;}
-    await commitHistoryImport(plan);
+    const batchId=await commitHistoryImport(plan,file.name);
     await syncFromCloud();
-    state.importMessage=`Imported ${plan.straight.length} straight bet${plan.straight.length===1?'':'s'} and ${plan.multi.length} parlay/teaser ticket${plan.multi.length===1?'':'s'} successfully.`;
+    state.importMessage=`Imported ${plan.straight.length} straight bet${plan.straight.length===1?'':'s'} and ${plan.multi.length} parlay/teaser ticket${plan.multi.length===1?'':'s'} successfully. Batch ${batchId.slice(0,8)}.`;
     render();
   }catch(err){
     state.importMessage=`Import failed: ${err.message||err}`;
