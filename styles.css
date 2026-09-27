@@ -1166,3 +1166,52 @@ html,body{min-height:100%;min-height:100dvh}
   .slate-market-abbr{max-width:42px;font-size:10px}
   .slate-market-value strong{font-size:14px}
 }
+
+
+/* TrackPicks V2.2.2 — Full Slate market-row polish */
+.slate-spread-box,
+.slate-total-box{
+  min-height:58px;
+  justify-content:center;
+}
+.slate-spread-box .slate-market-value,
+.slate-total-box .slate-market-value{
+  width:100%;
+  justify-content:center;
+  gap:9px;
+}
+.slate-spread-box .slate-market-abbr{
+  max-width:none;
+  overflow:visible;
+  text-overflow:clip;
+  white-space:nowrap;
+  font-size:14px;
+  font-weight:900;
+}
+.slate-spread-box .slate-market-logo{
+  width:24px;
+  height:24px;
+  flex-basis:24px;
+}
+.slate-spread-box .slate-market-value strong,
+.slate-total-box .slate-market-value strong{
+  font-size:18px;
+  font-weight:950;
+}
+.slate-total-box .slate-ou-label{
+  font-size:18px;
+  font-weight:950;
+  color:var(--text);
+  letter-spacing:0;
+  text-transform:none;
+}
+.slate-total-value{
+  gap:12px !important;
+}
+@media(max-width:390px){
+  .slate-spread-box .slate-market-abbr{font-size:13px}
+  .slate-spread-box .slate-market-value strong,
+  .slate-total-box .slate-market-value strong,
+  .slate-total-box .slate-ou-label{font-size:17px}
+  .slate-spread-box .slate-market-logo{width:22px;height:22px;flex-basis:22px}
+}
