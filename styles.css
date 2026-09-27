@@ -899,3 +899,24 @@ html,body{min-height:100%;min-height:100dvh}
 .page{
   padding-bottom:calc(92px + env(safe-area-inset-bottom));
 }
+
+
+/* TrackPicks V2.1.4.2 — correct bottom-nav horizontal positioning */
+.bottom-nav{
+  position:fixed;
+  left:50%;
+  right:auto;
+  bottom:0;
+  transform:translateX(-50%);
+  width:min(760px,100%);
+  max-width:760px;
+  z-index:60;
+  margin:0;
+  box-sizing:border-box;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+}
+.bottom-nav .nav-btn{
+  min-width:0;
+  width:100%;
+  text-align:center;
+}
