@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.1.2.5';
+const BUILD_VERSION = '2.1.2.6';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -477,7 +477,7 @@ function renderDashboard(){
         <div class="dashboard-import-actions">
           <button type="button" class="primary" data-import-history>Import Data</button>
           <button type="button" class="secondary" data-download-import-template>Download Blank Template</button>
-          <button type="button" class="secondary dashboard-manage-imports" data-manage-imports>Delete Import</button>
+          <button type="button" class="secondary dashboard-manage-imports" data-manage-imports>Manage Imports</button>
         </div>
         <input type="file" data-history-file accept=".csv,.xlsx" hidden>
         <div class="dashboard-import-note">Accepts TrackPicks CSV or XLSX files. Line fields may be numeric (-8.5) or Pick-style (TCU -8.5). The full file is validated before any rows are written.</div>
@@ -809,11 +809,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.5 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.6 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.5 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.6 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.2.5',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.2.5';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.2.6',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.2.6';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -2199,35 +2199,39 @@ function renderImportManager(){
       ? `<div class="dashboard-empty">No imports found for this account.</div>`
       : `<div class="import-history-list">${rows.map(b=>{
           const counts=importBatchTypeCounts(b.id);
-          const stats=[
-            `${Number(b.straight_count)||0} straight`,
-            `${counts.parlays} parlay${counts.parlays===1?'':'s'}`,
-            `${counts.teasers} teaser${counts.teasers===1?'':'s'}`,
-            `${Number(b.leg_count)||0} leg${Number(b.leg_count)===1?'':'s'}`
-          ].join(' · ');
+          const chips=[
+            `${Number(b.straight_count)||0} Straight`,
+            `${counts.parlays} Parlay${counts.parlays===1?'':'s'}`,
+            `${counts.teasers} Teaser${counts.teasers===1?'':'s'}`,
+            `${Number(b.leg_count)||0} Leg${Number(b.leg_count)===1?'':'s'}`
+          ];
           const deleting=state.deletingImportBatchId===b.id;
           return `<article class="import-history-card">
             <div class="import-history-main">
               <div class="import-history-file">${escapeAttr(b.file_name||'Imported data')}</div>
               <div class="import-history-time">${escapeAttr(formatImportTimestamp(b.created_at))}</div>
-              <div class="import-history-stats">${escapeAttr(stats)}</div>
+              <div class="import-history-chips">
+                ${chips.map(x=>`<span class="import-chip">${escapeAttr(x)}</span>`).join('')}
+              </div>
             </div>
-            <button type="button" class="danger-outline import-delete-btn" data-delete-import="${b.id}" ${deleting?'disabled':''}>${deleting?'Deleting…':'Delete'}</button>
+            <div class="import-history-actions">
+              <button type="button" class="danger-outline import-delete-btn" data-delete-import="${b.id}" ${deleting?'disabled':''}>${deleting?'Deleting…':'Delete'}</button>
+            </div>
           </article>`;
         }).join('')}</div>`;
 
   return `<div class="overlay import-manager-overlay">
     <section class="sheet import-manager-sheet">
       <div class="sheet-handle"></div>
-      <div class="close-row">
+      <div class="close-row import-manager-header">
         <div>
-          <h2 style="margin:0">Delete Import</h2>
-          <div class="detail-meta">Choose an uploaded file to remove its imported picks.</div>
+          <h2 style="margin:0">Manage Imports</h2>
+          <div class="detail-meta">Review and remove previous uploads.</div>
         </div>
         <button class="icon-btn" data-close-import-manager>✕</button>
       </div>
       ${body}
-      <div class="import-manager-note">Deleting an import removes the straight wagers, parlays, teasers, and their legs created by that upload. Other picks are left alone.</div>
+      <div class="import-manager-note">Deleting an import removes only the straight wagers, parlays, teasers, and legs created by that upload. Other picks are left alone.</div>
     </section>
   </div>`;
 }
