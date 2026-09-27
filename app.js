@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.2';
+const BUILD_VERSION = '2.2.3';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -908,17 +908,21 @@ function cardTeamLogo(name){
 function renderSlateTeamHero(name,side){
   const meta=teamMetaFor(name);
   const abbr=meta?.abbreviation||teamMonogram(name);
+  const shortName=meta?.shortDisplayName||meta?.short_display_name||'';
+  const displayName=shortName||name;
   const logo=meta?.logoUrl
     ? `<img class="slate-team-logo" src="${escapeAttr(meta.logoUrl)}" alt="" loading="lazy">`
     : `<div class="slate-team-logo slate-team-logo-fallback" aria-hidden="true">${escapeAttr(abbr)}</div>`;
-  return `<div class="slate-team slate-team-${side}">
+  return `<div class="slate-team slate-team-${side}" data-team-name="${escapeAttr(name)}" data-short-name="${escapeAttr(shortName)}">
     ${logo}
     <div class="slate-team-copy">
-      <div class="slate-team-name">${escapeAttr(name)}</div>
+      <div class="slate-team-name" data-full-name="${escapeAttr(name)}">${escapeAttr(displayName)}</div>
       <div class="slate-team-abbr">${escapeAttr(abbr)}</div>
+      ${state.isAdmin&&!shortName?`<div class="short-name-flag" data-short-name-flag="${escapeAttr(name)}" hidden>Needs short display name</div>`:''}
     </div>
   </div>`;
 }
+
 function renderMovementArrow(signal,label){
   if(signal==='up')return `<span class="market-move market-move-up" aria-label="${escapeAttr(label)} strengthening">↑</span>`;
   if(signal==='down')return `<span class="market-move market-move-down" aria-label="${escapeAttr(label)} weakening">↓</span>`;
@@ -960,6 +964,21 @@ function renderSlateStatus(saved,caution,missing){
   if(missing)bits.push(`<span class="slate-status slate-status-missing">Missing market</span>`);
   return bits.length?`<div class="slate-status-row">${bits.join('')}</div>`:'';
 }
+function detectSlateShortNameNeeds(){
+  if(!state.isAdmin)return;
+  requestAnimationFrame(()=>{
+    document.querySelectorAll('.slate-team').forEach(teamEl=>{
+      const nameEl=teamEl.querySelector('.slate-team-name');
+      const flag=teamEl.querySelector('.short-name-flag');
+      if(!nameEl||!flag)return;
+      const hasShort=(teamEl.dataset.shortName||'').trim().length>0;
+      if(hasShort){ flag.hidden=true; return; }
+      const wrapped=(nameEl.scrollHeight-nameEl.clientHeight)>1;
+      flag.hidden=!wrapped;
+    });
+  });
+}
+
 
 function movementForGame(g){
   const history=oddsHistoryForGame(g.id);
@@ -1162,11 +1181,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.2 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.2 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.2.2',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.2.2';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.2.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.2.3';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
@@ -2738,3 +2757,11 @@ initCloud();
 ensureFreshPwaController(); checkForAppUpdate();
 setInterval(checkForAppUpdate, 5 * 60 * 1000);
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') ensureFreshPwaController(); checkForAppUpdate(); });
+
+if(typeof document!=='undefined'){
+  const slateShortNameObserver=new MutationObserver(()=>detectSlateShortNameNeeds());
+  document.addEventListener('DOMContentLoaded',()=>{
+    slateShortNameObserver.observe(document.body,{childList:true,subtree:true});
+    detectSlateShortNameNeeds();
+  },{once:true});
+}

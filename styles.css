@@ -1215,3 +1215,96 @@ html,body{min-height:100%;min-height:100dvh}
   .slate-total-box .slate-ou-label{font-size:17px}
   .slate-spread-box .slate-market-logo{width:22px;height:22px;flex-basis:22px}
 }
+
+
+/* TrackPicks V2.2.3 — compact slate cards + short display-name support */
+.game-row.slate-game-card{
+  padding:10px 12px;
+}
+.slate-matchup{
+  gap:7px;
+  padding:0 0 8px;
+}
+.slate-team{
+  gap:7px;
+}
+.slate-team-logo{
+  width:36px;
+  height:36px;
+  flex:0 0 36px;
+  object-fit:contain;
+}
+.slate-team-name{
+  font-size:14px;
+  line-height:1.05;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:clip;
+}
+.slate-team-abbr{
+  margin-top:1px;
+  font-size:10px;
+}
+.slate-markets{
+  gap:6px;
+}
+.slate-spread-box,
+.slate-total-box{
+  min-height:44px;
+  padding:6px 8px;
+}
+.slate-spread-box .slate-market-value,
+.slate-total-box .slate-market-value{
+  gap:7px;
+}
+.slate-spread-box .slate-market-logo{
+  width:20px;
+  height:20px;
+  flex-basis:20px;
+  object-fit:contain;
+}
+.slate-spread-box .slate-market-abbr,
+.slate-total-box .slate-ou-label{
+  font-size:13px;
+  font-weight:900;
+}
+.slate-spread-box .slate-market-value strong,
+.slate-total-box .slate-market-value strong{
+  font-size:16px;
+}
+.market-move{
+  width:16px;
+  height:16px;
+  font-size:13px;
+}
+.slate-card-footer{
+  margin-top:7px;
+  padding-top:6px;
+}
+.slate-tv{
+  height:18px;
+}
+.slate-tv .tv-network-logo-img{
+  max-height:16px;
+}
+.slate-status-row{
+  margin-top:6px;
+}
+.short-name-flag{
+  margin-top:3px;
+  font-size:9px;
+  font-weight:850;
+  color:#b45309;
+  line-height:1.1;
+}
+@media(max-width:390px){
+  .game-row.slate-game-card{padding:9px 10px}
+  .slate-team-logo{width:34px;height:34px;flex-basis:34px}
+  .slate-team-name{font-size:13px}
+  .slate-spread-box,
+  .slate-total-box{min-height:42px;padding:5px 7px}
+  .slate-spread-box .slate-market-abbr,
+  .slate-total-box .slate-ou-label{font-size:12px}
+  .slate-spread-box .slate-market-value strong,
+  .slate-total-box .slate-market-value strong{font-size:15px}
+}
