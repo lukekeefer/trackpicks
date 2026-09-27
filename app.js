@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.3';
+const BUILD_VERSION = '2.2.3.2';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -823,7 +823,7 @@ async function syncFromCloud(){
       state.sb.from('games').select('*').eq('season',2026).gte('week',0).lte('week',12),
       state.sb.from('wagers').select('*').eq('user_id',state.user.id),
       state.sb.from('user_game_flags').select('game_id,caution').eq('user_id',state.user.id).eq('caution',true),
-      state.sb.from('cfb_teams').select('espn_name,conference,subdivision,season,abbreviation,logo_url').eq('season',2026),
+      state.sb.from('cfb_teams').select('espn_name,conference,subdivision,season,abbreviation,logo_url,short_display_name').eq('season',2026),
       state.sb.from('cfb_team_aliases').select('provider,alias,espn_name')
     ]);
     if(gamesRes.error)throw gamesRes.error;
@@ -834,7 +834,7 @@ async function syncFromCloud(){
     state.games=(gamesRes.data||[]).map(fromDbGame);
     state.wagers=(wagersRes.data||[]).map(fromDbWager);
     state.cautionGameIds=(flagsRes.data||[]).map(r=>r.game_id);
-    state.cfbTeams=(teamsRes.data||[]).map(r=>({espnName:r.espn_name,conference:r.conference,subdivision:r.subdivision,season:r.season,abbreviation:r.abbreviation||'',logoUrl:r.logo_url||''}));
+    state.cfbTeams=(teamsRes.data||[]).map(r=>({espnName:r.espn_name,conference:r.conference,subdivision:r.subdivision,season:r.season,abbreviation:r.abbreviation||'',logoUrl:r.logo_url||'',shortDisplayName:r.short_display_name||''}));
     state.cfbAliases=(aliasesRes.data||[]).map(r=>({provider:r.provider,alias:r.alias,espnName:r.espn_name}));
     const historyRes=await state.sb.from('game_odds_history').select('*').eq('season',2026).gte('week',0).lte('week',12).order('captured_at',{ascending:true});
     state.oddsHistory=historyRes.error?[]:(historyRes.data||[]).map(fromDbOddsSnapshot);
@@ -905,19 +905,59 @@ function cardTeamLogo(name){
 }
 
 
+
+const MULTIWORD_MASCOT_SUFFIXES=[
+  '49ers','Aggies','Aztecs','Badgers','Bearcats','Bears','Beavers','Black Bears',
+  'Blue Devils','Blue Hens','Blue Raiders','Bobcats','Boilermakers','Broncos',
+  'Bruins','Buccaneers','Buffaloes','Bulldogs','Cardinals','Chanticleers',
+  'Chippewas','Commodores','Cornhuskers','Cougars','Cowboys','Crimson Tide',
+  'Cyclones','Demon Deacons','Dukes','Eagles','Falcons','Fighting Illini',
+  'Flames','Flyers','Gamecocks','Golden Bears','Golden Eagles','Golden Flashes',
+  'Golden Gophers','Golden Hurricane','Governors','Green Wave','Hawkeyes',
+  'Hilltoppers','Hoosiers','Horned Frogs','Huskies','Jaguars','Jayhawks',
+  'Kangaroos','Keydets','Knights','Lancers','Leopards','Lions','Lobos',
+  'Mean Green','Midshipmen','Miners','Monarchs','Mountaineers','Mustangs',
+  'Nittany Lions','Owls','Paladins','Panthers','Pirates','Ragin Cajuns',
+  'Rainbow Warriors','Rams','Rebels','Red Foxes','Red Raiders','Red Wolves',
+  'Rockets','Scarlet Knights','Seminoles','Sooners','Spartans','Sun Devils',
+  'Sycamores','Tar Heels','Terrapins','Thundering Herd','Tigers','Titans',
+  'Trojans','Utes','Vandals','Vikings','Volunteers','Warhawks','Warriors',
+  'Wildcats','Wolf Pack','Wolfpack','Wolverines','Yellow Jackets','Zips'
+].sort((a,b)=>b.length-a.length);
+
+function splitSlateTeamName(fullName){
+  const full=String(fullName||'').trim();
+  if(!full)return {school:'',mascot:''};
+  const lower=full.toLowerCase();
+  for(const mascot of MULTIWORD_MASCOT_SUFFIXES){
+    const suffix=' '+mascot.toLowerCase();
+    if(lower.endsWith(suffix)){
+      return {
+        school:full.slice(0,full.length-suffix.length).trim(),
+        mascot
+      };
+    }
+  }
+  const parts=full.split(/\s+/);
+  if(parts.length<2)return {school:full,mascot:''};
+  return {school:parts.slice(0,-1).join(' '),mascot:parts.at(-1)};
+}
+
 function renderSlateTeamHero(name,side){
   const meta=teamMetaFor(name);
   const abbr=meta?.abbreviation||teamMonogram(name);
-  const shortName=meta?.shortDisplayName||meta?.short_display_name||'';
-  const displayName=shortName||name;
+  const parts=splitSlateTeamName(name);
+  const shortName=(meta?.shortDisplayName||meta?.short_display_name||'').trim();
+  const school=shortName||parts.school;
+  const mascot=parts.mascot;
   const logo=meta?.logoUrl
     ? `<img class="slate-team-logo" src="${escapeAttr(meta.logoUrl)}" alt="" loading="lazy">`
     : `<div class="slate-team-logo slate-team-logo-fallback" aria-hidden="true">${escapeAttr(abbr)}</div>`;
   return `<div class="slate-team slate-team-${side}" data-team-name="${escapeAttr(name)}" data-short-name="${escapeAttr(shortName)}">
     ${logo}
     <div class="slate-team-copy">
-      <div class="slate-team-name" data-full-name="${escapeAttr(name)}">${escapeAttr(displayName)}</div>
-      <div class="slate-team-abbr">${escapeAttr(abbr)}</div>
+      <div class="slate-school-name" data-school-name="${escapeAttr(parts.school)}">${escapeAttr(school)}</div>
+      ${mascot?`<div class="slate-mascot-name">${escapeAttr(mascot)}</div>`:''}
       ${state.isAdmin&&!shortName?`<div class="short-name-flag" data-short-name-flag="${escapeAttr(name)}" hidden>Needs short display name</div>`:''}
     </div>
   </div>`;
@@ -968,7 +1008,7 @@ function detectSlateShortNameNeeds(){
   if(!state.isAdmin)return;
   requestAnimationFrame(()=>{
     document.querySelectorAll('.slate-team').forEach(teamEl=>{
-      const nameEl=teamEl.querySelector('.slate-team-name');
+      const nameEl=teamEl.querySelector('.slate-school-name');
       const flag=teamEl.querySelector('.short-name-flag');
       if(!nameEl||!flag)return;
       const hasShort=(teamEl.dataset.shortName||'').trim().length>0;
@@ -1181,11 +1221,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.3.2 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.3.2 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.2.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.2.3';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.2.3.2',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.2.3.2';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
