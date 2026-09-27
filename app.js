@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.1.2.6';
+const BUILD_VERSION = '2.1.3';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -414,6 +414,104 @@ function dashboardBreakdown(tickets,keyFn){
   return [...map.entries()].map(([name,rows])=>({name,...dashboardSummary(rows)}))
     .sort((a,b)=>b.units-a.units||b.total-a.total);
 }
+
+function dashboardWeeklyRows(){
+  const tickets=dashboardTickets().filter(t=>isGradedResult(t.result)&&Number.isFinite(Number(t.week)));
+  const byWeek=new Map();
+  tickets.forEach(t=>{
+    const week=Number(t.week);
+    const arr=byWeek.get(week)||[];
+    arr.push(t); byWeek.set(week,arr);
+  });
+  let cumulative=0;
+  return [...byWeek.keys()].sort((a,b)=>a-b).map(week=>{
+    const summary=dashboardSummary(byWeek.get(week));
+    cumulative+=summary.units;
+    return {week,...summary,cumulative};
+  });
+}
+function dashboardStraightWagers(){
+  return state.wagers.filter(w=>isGradedResult(w.result));
+}
+function dashboardSpreadProfileRows(){
+  const buckets=new Map([
+    ['Home Favorite',[]],['Home Dog',[]],['Road Favorite',[]],['Road Dog',[]]
+  ]);
+  dashboardStraightWagers().forEach(w=>{
+    if(w.betType!=='Spread')return;
+    const g=gameById(w.gameId);
+    if(!g)return;
+    const selected=w.selection;
+    const side=selected===g.home?'Home':selected===g.away?'Road':null;
+    const line=Number(w.line);
+    if(!side||!Number.isFinite(line)||line===0)return;
+    const role=line<0?'Favorite':'Dog';
+    const key=`${side} ${role}`;
+    if(buckets.has(key))buckets.get(key).push({
+      result:w.result,units:Number(w.units)||0,payoutOdds:Number(w.payoutOdds)||-110
+    });
+  });
+  return [...buckets.entries()].map(([name,rows])=>({name,...dashboardSummary(rows)}));
+}
+function dashboardTotalsRows(){
+  const buckets=new Map([['Over',[]],['Under',[]]]);
+  dashboardStraightWagers().forEach(w=>{
+    if(w.betType!=='Total')return;
+    const key=String(w.selection||'').toLowerCase()==='over'?'Over':
+      String(w.selection||'').toLowerCase()==='under'?'Under':null;
+    if(!key)return;
+    buckets.get(key).push({
+      result:w.result,units:Number(w.units)||0,payoutOdds:Number(w.payoutOdds)||-110
+    });
+  });
+  return [...buckets.entries()].map(([name,rows])=>({name,...dashboardSummary(rows)}));
+}
+function renderDashboardAnalyticsRows(rows,{empty='No graded data yet.'}={}){
+  const hasData=rows.some(r=>r.total>0);
+  if(!hasData)return `<div class="dashboard-empty">${empty}</div>`;
+  return rows.map(r=>`<div class="dashboard-analytics-row">
+    <div class="dashboard-analytics-name">
+      <strong>${escapeAttr(r.name)}</strong>
+      <span>${r.total?`${r.wins}-${r.losses}-${r.pushes}`:'—'}</span>
+    </div>
+    <div>
+      <strong>${r.total?fmtPct(r.winPct):'—'}</strong>
+      <span>Win %</span>
+    </div>
+    <div class="${r.units>0?'positive':r.units<0?'negative':''}">
+      <strong>${r.total?fmtUnits(r.units):'—'}</strong>
+      <span>Units</span>
+    </div>
+    <div class="${r.roi>0?'positive':r.roi<0?'negative':''}">
+      <strong>${r.total?fmtPct(r.roi):'—'}</strong>
+      <span>ROI</span>
+    </div>
+  </div>`).join('');
+}
+function renderWeeklyPerformance(){
+  const rows=dashboardWeeklyRows();
+  if(!rows.length)return `<div class="dashboard-empty">No graded weekly data yet.</div>`;
+  const maxAbs=Math.max(1,...rows.map(r=>Math.abs(r.units)));
+  return `<div class="weekly-performance-card">
+    ${rows.map(r=>{
+      const width=Math.max(4,Math.round(Math.abs(r.units)/maxAbs*100));
+      const cls=r.units>0?'positive':r.units<0?'negative':'neutral';
+      return `<div class="weekly-performance-row">
+        <div class="weekly-performance-head">
+          <strong>Week ${r.week}</strong>
+          <span>${r.wins}-${r.losses}-${r.pushes} · ${fmtPct(r.winPct)}</span>
+        </div>
+        <div class="weekly-performance-bar-track">
+          <div class="weekly-performance-bar ${cls}" style="width:${width}%"></div>
+        </div>
+        <div class="weekly-performance-foot">
+          <span class="${r.units>0?'positive':r.units<0?'negative':''}">${fmtUnits(r.units)}</span>
+          <span>Cumulative ${fmtUnits(r.cumulative)}</span>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
 function renderDashboardMetric(label,value,sub=''){
   return `<div class="dashboard-metric"><div class="dashboard-metric-label">${label}</div><div class="dashboard-metric-value">${value}</div>${sub?`<div class="dashboard-metric-sub">${sub}</div>`:''}</div>`;
 }
@@ -486,6 +584,42 @@ function renderDashboard(){
     </section>
 
     <section class="dashboard-section">
+      <div class="dashboard-section-head">
+        <div>
+          <div class="section-title">Weekly Performance</div>
+          <div class="dashboard-section-copy">Ticket-level record and units by week.</div>
+        </div>
+      </div>
+      ${renderWeeklyPerformance()}
+    </section>
+
+    <section class="dashboard-section dashboard-split-section">
+      <div>
+        <div class="dashboard-section-head">
+          <div>
+            <div class="section-title">Spread Profile</div>
+            <div class="dashboard-section-copy">Graded straight spread bets.</div>
+          </div>
+        </div>
+        <div class="dashboard-card dashboard-analytics-card">
+          ${renderDashboardAnalyticsRows(dashboardSpreadProfileRows(),{empty:'No graded spread bets yet.'})}
+        </div>
+      </div>
+
+      <div>
+        <div class="dashboard-section-head">
+          <div>
+            <div class="section-title">Totals Breakdown</div>
+            <div class="dashboard-section-copy">Graded straight totals bets.</div>
+          </div>
+        </div>
+        <div class="dashboard-card dashboard-analytics-card">
+          ${renderDashboardAnalyticsRows(dashboardTotalsRows(),{empty:'No graded totals bets yet.'})}
+        </div>
+      </div>
+    </section>
+
+    <section class="dashboard-section">
       <div class="section-title">Performance by Picker</div>
       <div class="dashboard-card">${renderDashboardBreakdownRows(byPicker)}</div>
     </section>
@@ -497,7 +631,7 @@ function renderDashboard(){
 
     <div class="dashboard-coming-soon">
       <strong>Next dashboard layers</strong>
-      <span>Weekly trends, spread profiles, totals, conference/team analytics, parlay/teaser legs, DDL and caution.</span>
+      <span>Spread-size buckets, conference/team analytics, parlay/teaser legs, DDL and caution.</span>
     </div>
   </div>`;
 }
@@ -809,11 +943,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.6 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.2.6 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.2.6',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.2.6';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.3';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
