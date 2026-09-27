@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.1.3';
+const BUILD_VERSION = '2.1.4.1';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -512,6 +512,98 @@ function renderWeeklyPerformance(){
     }).join('')}
   </div>`;
 }
+
+function dashboardParlayTicketRows(){
+  const makeRow=(label,isTeaser)=>{
+    const tickets=state.parlays.filter(p=>p.isTeaser===isTeaser&&isGradedResult(p.result));
+    const summary=dashboardSummary(tickets.map(p=>({
+      result:p.result,
+      units:Number(p.units)||0,
+      odds:Number(p.odds)||0
+    })));
+    const legCounts=tickets.map(p=>legsForParlay(p.id).length).filter(n=>n>0);
+    const avgLegs=legCounts.length?legCounts.reduce((a,b)=>a+b,0)/legCounts.length:null;
+
+    const losing=tickets.filter(p=>normalizedResult(p.result)==='Loss');
+    const missCounts=losing.map(p=>{
+      const legs=legsForParlay(p.id);
+      return legs.filter(l=>['Loss','DDL'].includes(l.result)).length;
+    }).filter(n=>n>0);
+
+    const avgMiss=missCounts.length?missCounts.reduce((a,b)=>a+b,0)/missCounts.length:null;
+
+    const dist=new Map();
+    missCounts.forEach(n=>dist.set(n,(dist.get(n)||0)+1));
+
+    return {
+      name:label,
+      ...summary,
+      avgLegs,
+      avgMiss,
+      missDistribution:[...dist.entries()].sort((a,b)=>a[0]-b[0]),
+      losingTickets:losing.length
+    };
+  };
+
+  return [
+    makeRow('Parlay',false),
+    makeRow('Teaser',true)
+  ];
+}
+
+function renderParlayTicketTable(){
+  const rows=dashboardParlayTicketRows();
+  const hasData=rows.some(r=>r.total>0);
+  if(!hasData)return `<div class="dashboard-empty">No graded parlays or teasers yet.</div>`;
+
+  return `<div class="dashboard-card parlay-ticket-card">
+    ${rows.map(r=>`<div class="parlay-ticket-row">
+      <div class="parlay-ticket-main">
+        <strong>${r.name}</strong>
+        <span>${r.total?`${r.wins}-${r.losses}-${r.pushes}`:'—'}</span>
+      </div>
+      <div>
+        <strong>${r.total?fmtPct(r.winPct):'—'}</strong>
+        <span>Win %</span>
+      </div>
+      <div>
+        <strong>${r.avgLegs==null?'—':r.avgLegs.toFixed(1)}</strong>
+        <span>Avg Legs</span>
+      </div>
+      <div>
+        <strong>${r.avgMiss==null?'—':r.avgMiss.toFixed(1)}</strong>
+        <span>Avg Missed</span>
+      </div>
+      <div class="${r.units>0?'positive':r.units<0?'negative':''}">
+        <strong>${r.total?fmtUnits(r.units):'—'}</strong>
+        <span>Units</span>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+function renderMissedLegsBreakdown(){
+  const rows=dashboardParlayTicketRows();
+  const withLosses=rows.filter(r=>r.losingTickets>0);
+
+  if(!withLosses.length)return `<div class="dashboard-empty">No losing parlay/teaser tickets to analyze yet.</div>`;
+
+  return `<div class="missed-legs-grid">
+    ${withLosses.map(r=>`<div class="missed-legs-card">
+      <div class="missed-legs-head">
+        <strong>${r.name}</strong>
+        <span>${r.losingTickets} losing ticket${r.losingTickets===1?'':'s'}</span>
+      </div>
+      <div class="missed-legs-list">
+        ${r.missDistribution.map(([legs,count])=>`<div class="missed-legs-item">
+          <span>Missed by ${legs} leg${legs===1?'':'s'}</span>
+          <strong>${count}</strong>
+        </div>`).join('')}
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
 function renderDashboardMetric(label,value,sub=''){
   return `<div class="dashboard-metric"><div class="dashboard-metric-label">${label}</div><div class="dashboard-metric-value">${value}</div>${sub?`<div class="dashboard-metric-sub">${sub}</div>`:''}</div>`;
 }
@@ -620,6 +712,26 @@ function renderDashboard(){
     </section>
 
     <section class="dashboard-section">
+      <div class="dashboard-section-head">
+        <div>
+          <div class="section-title">Parlays & Teasers</div>
+          <div class="dashboard-section-copy">Ticket-level performance and average number of losing legs.</div>
+        </div>
+      </div>
+      ${renderParlayTicketTable()}
+    </section>
+
+    <section class="dashboard-section">
+      <div class="dashboard-section-head">
+        <div>
+          <div class="section-title">How Many Legs Did You Miss By?</div>
+          <div class="dashboard-section-copy">Counts only losing tickets with graded individual legs.</div>
+        </div>
+      </div>
+      ${renderMissedLegsBreakdown()}
+    </section>
+
+    <section class="dashboard-section">
       <div class="section-title">Performance by Picker</div>
       <div class="dashboard-card">${renderDashboardBreakdownRows(byPicker)}</div>
     </section>
@@ -631,7 +743,7 @@ function renderDashboard(){
 
     <div class="dashboard-coming-soon">
       <strong>Next dashboard layers</strong>
-      <span>Spread-size buckets, conference/team analytics, parlay/teaser legs, DDL and caution.</span>
+      <span>Spread-size buckets, conference/team analytics, deeper leg breakdowns, DDL and caution.</span>
     </div>
   </div>`;
 }
@@ -943,11 +1055,11 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.3 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.4.1 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.3 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.1.4.1 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.3',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.3';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
+function topbar(){ let title='TrackPicks',subtitle='Track your picks · V2.1.4.1',action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`; if(state.view==='market'){title=`Week ${state.selectedWeek}`;subtitle=`${formatWeekRange(state.selectedWeek)} · DraftKings market board`;const loadButton=state.isAdmin?`<button class="primary compact" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`:'';action=`<div class="top-actions"><button class="secondary" data-nav="weeks">← Weeks</button><button class="secondary" data-settings>Settings</button>${loadButton}</div>`;} if(state.view==='slip'){title='Slip';subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;} if(state.view==='dashboard'){title='Dashboard';subtitle='Season performance · V2.1.4.1';action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;} return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`; }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
