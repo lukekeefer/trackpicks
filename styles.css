@@ -1455,3 +1455,13 @@ html,body{min-height:100%;min-height:100dvh}
     font-size:9.5px;
   }
 }
+
+
+/* TrackPicks V2.2.4 — network logo asset overrides */
+.slate-tv .tv-network-abc-full-slate{
+  max-width:84px;
+  max-height:18px;
+  width:auto;
+  height:auto;
+  object-fit:contain;
+}
