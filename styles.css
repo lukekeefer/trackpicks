@@ -885,56 +885,15 @@ html,body{min-height:100%;min-height:100dvh}
 }
 
 
-/* TrackPicks V2.1.4.1 — bottom nav regression fix */
-.bottom-nav{
-  position:fixed;
-  left:0;
-  right:0;
-  bottom:0;
-  z-index:60;
-  width:100%;
-  margin:0;
-  padding-bottom:env(safe-area-inset-bottom);
-}
-.page{
-  padding-bottom:calc(92px + env(safe-area-inset-bottom));
-}
 
-
-/* TrackPicks V2.1.4.2 — correct bottom-nav horizontal positioning */
-.bottom-nav{
-  position:fixed;
-  left:50%;
-  right:auto;
-  bottom:0;
-  transform:translateX(-50%);
-  width:min(760px,100%);
-  max-width:760px;
-  z-index:60;
-  margin:0;
-  box-sizing:border-box;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-}
-.bottom-nav .nav-btn{
-  min-width:0;
-  width:100%;
-  text-align:center;
-}
-
-
-/* TrackPicks V2.2.0 — Full Slate redesign foundation.
-   This release prepares team/logo/abbreviation and movement-signal logic.
-   Existing game-card markup is intentionally unchanged until V2.2.1. */
-
-
-/* TrackPicks V2.2.1 — Full Slate matchup-first game cards */
+/* TrackPicks V2.2.4.1 — consolidated Full Slate card styles */
 .slate-game-list{
   gap:12px;
 }
 .game-row.slate-game-card{
   position:relative;
   display:block;
-  padding:14px;
+  padding:10px 12px;
   overflow:hidden;
   cursor:pointer;
   box-shadow:0 3px 12px rgba(17,24,39,.05);
@@ -947,28 +906,29 @@ html,body{min-height:100%;min-height:100dvh}
   border-color:#d97706;
   background:#fffdf7;
 }
+
 .slate-matchup{
   display:grid;
   grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);
   align-items:center;
-  gap:8px;
-  padding:2px 0 13px;
+  gap:7px;
+  padding:0 0 8px;
 }
 .slate-team{
   min-width:0;
   display:flex;
   align-items:center;
-  gap:9px;
+  gap:7px;
 }
 .slate-team-home{
   flex-direction:row-reverse;
   text-align:right;
 }
 .slate-team-logo{
-  width:42px;
-  height:42px;
+  width:38px;
+  height:38px;
+  flex:0 0 38px;
   object-fit:contain;
-  flex:0 0 42px;
 }
 .slate-team-logo-fallback{
   display:grid;
@@ -982,19 +942,38 @@ html,body{min-height:100%;min-height:100dvh}
 .slate-team-copy{
   min-width:0;
 }
-.slate-team-name{
-  font-size:15px;
-  line-height:1.12;
-  font-weight:900;
+.slate-school-name,
+.slate-mascot-name{
   color:var(--text);
-  overflow-wrap:anywhere;
+  font-size:14px;
+  line-height:1.18;
+  font-weight:900;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:clip;
+  padding-bottom:1px;
 }
-.slate-team-abbr{
+.slate-mascot-name{
+  margin-top:4px;
+}
+.slate-team .slate-team-abbr{
+  display:none !important;
+}
+.slate-team-smaller-font .slate-school-name{
+  font-size:13px;
+}
+.slate-team-smaller-nickname .slate-mascot-name{
+  font-size:11.9px;
+}
+.slate-team-extra-small-nickname .slate-mascot-name{
+  font-size:10.5px;
+}
+.short-name-flag{
   margin-top:3px;
-  color:var(--muted);
-  font-size:10px;
+  font-size:9px;
   font-weight:850;
-  letter-spacing:.08em;
+  color:#b45309;
+  line-height:1.1;
 }
 .slate-at{
   text-align:center;
@@ -1002,10 +981,11 @@ html,body{min-height:100%;min-height:100dvh}
   font-size:13px;
   font-weight:900;
 }
+
 .slate-markets{
   display:grid;
   grid-template-columns:1fr 1fr;
-  gap:8px;
+  gap:6px;
 }
 .slate-market-box{
   min-width:0;
@@ -1056,9 +1036,6 @@ html,body{min-height:100%;min-height:100dvh}
 }
 .slate-market-abbr{
   min-width:0;
-  max-width:54px;
-  overflow:hidden;
-  text-overflow:ellipsis;
   white-space:nowrap;
   font-size:11px;
   font-weight:900;
@@ -1070,13 +1047,55 @@ html,body{min-height:100%;min-height:100dvh}
   font-size:11px;
   font-weight:800;
 }
+
+.slate-spread-box,
+.slate-total-box{
+  min-height:44px;
+  padding:6px 8px;
+  justify-content:center;
+}
+.slate-spread-box .slate-market-value,
+.slate-total-box .slate-market-value{
+  width:100%;
+  justify-content:center;
+  gap:7px;
+}
+.slate-spread-box .slate-market-abbr,
+.slate-total-box .slate-ou-label{
+  max-width:none;
+  overflow:visible;
+  text-overflow:clip;
+  white-space:nowrap;
+  font-size:13px;
+  font-weight:900;
+}
+.slate-spread-box .slate-market-logo{
+  width:20px;
+  height:20px;
+  flex-basis:20px;
+  object-fit:contain;
+}
+.slate-spread-box .slate-market-value strong,
+.slate-total-box .slate-market-value strong{
+  font-size:16px;
+  font-weight:950;
+}
+.slate-total-box .slate-ou-label{
+  color:var(--text);
+  letter-spacing:0;
+  text-transform:none;
+}
+.slate-total-value{
+  gap:12px !important;
+}
+
 .market-move{
   display:inline-grid;
   place-items:center;
-  width:18px;
-  height:18px;
+  width:16px;
+  height:16px;
   border-radius:999px;
-  font-size:15px;
+  font-size:13px;
   font-weight:950;
   line-height:1;
 }
@@ -1088,9 +1107,10 @@ html,body{min-height:100%;min-height:100dvh}
   color:#b91c1c;
   background:#fee2e2;
 }
+
 .slate-card-footer{
-  margin-top:10px;
-  padding-top:9px;
+  margin-top:7px;
+  padding-top:6px;
   border-top:1px solid #eef0f3;
   display:flex;
   justify-content:space-between;
@@ -1112,14 +1132,14 @@ html,body{min-height:100%;min-height:100dvh}
 .slate-tv{
   min-width:42px;
   max-width:92px;
-  height:20px;
+  height:18px;
   display:flex;
   justify-content:flex-end;
   align-items:center;
 }
 .slate-tv .tv-network-logo-img{
   max-width:72px;
-  max-height:18px;
+  max-height:16px;
   width:auto;
   height:auto;
   object-fit:contain;
@@ -1130,11 +1150,12 @@ html,body{min-height:100%;min-height:100dvh}
   font-weight:850;
   white-space:nowrap;
 }
+
 .slate-status-row{
   display:flex;
   flex-wrap:wrap;
   gap:5px;
-  margin-top:8px;
+  margin-top:6px;
 }
 .slate-status{
   display:inline-flex;
@@ -1156,187 +1177,11 @@ html,body{min-height:100%;min-height:100dvh}
   background:#fff7ed;
   color:#9a3412;
 }
+
 @media(max-width:390px){
-  .game-row.slate-game-card{padding:12px}
-  .slate-team-logo{width:38px;height:38px;flex-basis:38px}
-  .slate-team-name{font-size:13px}
-  .slate-markets{gap:6px}
-  .slate-market-box{padding:8px;gap:5px}
-  .slate-market-logo{width:18px;height:18px;flex-basis:18px}
-  .slate-market-abbr{max-width:42px;font-size:10px}
-  .slate-market-value strong{font-size:14px}
-}
-
-
-/* TrackPicks V2.2.2 — Full Slate market-row polish */
-.slate-spread-box,
-.slate-total-box{
-  min-height:58px;
-  justify-content:center;
-}
-.slate-spread-box .slate-market-value,
-.slate-total-box .slate-market-value{
-  width:100%;
-  justify-content:center;
-  gap:9px;
-}
-.slate-spread-box .slate-market-abbr{
-  max-width:none;
-  overflow:visible;
-  text-overflow:clip;
-  white-space:nowrap;
-  font-size:14px;
-  font-weight:900;
-}
-.slate-spread-box .slate-market-logo{
-  width:24px;
-  height:24px;
-  flex-basis:24px;
-}
-.slate-spread-box .slate-market-value strong,
-.slate-total-box .slate-market-value strong{
-  font-size:18px;
-  font-weight:950;
-}
-.slate-total-box .slate-ou-label{
-  font-size:18px;
-  font-weight:950;
-  color:var(--text);
-  letter-spacing:0;
-  text-transform:none;
-}
-.slate-total-value{
-  gap:12px !important;
-}
-@media(max-width:390px){
-  .slate-spread-box .slate-market-abbr{font-size:13px}
-  .slate-spread-box .slate-market-value strong,
-  .slate-total-box .slate-market-value strong,
-  .slate-total-box .slate-ou-label{font-size:17px}
-  .slate-spread-box .slate-market-logo{width:22px;height:22px;flex-basis:22px}
-}
-
-
-/* TrackPicks V2.2.3 — compact slate cards + short display-name support */
-.game-row.slate-game-card{
-  padding:10px 12px;
-}
-.slate-matchup{
-  gap:7px;
-  padding:0 0 8px;
-}
-.slate-team{
-  gap:7px;
-}
-.slate-team-logo{
-  width:36px;
-  height:36px;
-  flex:0 0 36px;
-  object-fit:contain;
-}
-.slate-team-name{
-  font-size:14px;
-  line-height:1.05;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:clip;
-}
-.slate-team-abbr{
-  margin-top:1px;
-  font-size:10px;
-}
-.slate-markets{
-  gap:6px;
-}
-.slate-spread-box,
-.slate-total-box{
-  min-height:44px;
-  padding:6px 8px;
-}
-.slate-spread-box .slate-market-value,
-.slate-total-box .slate-market-value{
-  gap:7px;
-}
-.slate-spread-box .slate-market-logo{
-  width:20px;
-  height:20px;
-  flex-basis:20px;
-  object-fit:contain;
-}
-.slate-spread-box .slate-market-abbr,
-.slate-total-box .slate-ou-label{
-  font-size:13px;
-  font-weight:900;
-}
-.slate-spread-box .slate-market-value strong,
-.slate-total-box .slate-market-value strong{
-  font-size:16px;
-}
-.market-move{
-  width:16px;
-  height:16px;
-  font-size:13px;
-}
-.slate-card-footer{
-  margin-top:7px;
-  padding-top:6px;
-}
-.slate-tv{
-  height:18px;
-}
-.slate-tv .tv-network-logo-img{
-  max-height:16px;
-}
-.slate-status-row{
-  margin-top:6px;
-}
-.short-name-flag{
-  margin-top:3px;
-  font-size:9px;
-  font-weight:850;
-  color:#b45309;
-  line-height:1.1;
-}
-@media(max-width:390px){
-  .game-row.slate-game-card{padding:9px 10px}
-  .slate-team-logo{width:34px;height:34px;flex-basis:34px}
-  .slate-team-name{font-size:13px}
-  .slate-spread-box,
-  .slate-total-box{min-height:42px;padding:5px 7px}
-  .slate-spread-box .slate-market-abbr,
-  .slate-total-box .slate-ou-label{font-size:12px}
-  .slate-spread-box .slate-market-value strong,
-  .slate-total-box .slate-market-value strong{font-size:15px}
-}
-
-
-/* TrackPicks V2.2.3.2 — school/mascot split */
-.slate-team-logo{
-  width:38px;
-  height:38px;
-  flex:0 0 38px;
-  object-fit:contain;
-}
-.slate-team-copy{
-  min-width:0;
-}
-.slate-school-name,
-.slate-mascot-name{
-  color:var(--text);
-  font-size:14px;
-  line-height:1.05;
-  font-weight:900;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:clip;
-}
-.slate-mascot-name{
-  margin-top:2px;
-}
-.slate-team .slate-team-abbr{
-  display:none !important;
-}
-@media(max-width:390px){
+  .game-row.slate-game-card{
+    padding:9px 10px;
+  }
   .slate-team-logo{
     width:36px;
     height:36px;
@@ -1345,123 +1190,75 @@ html,body{min-height:100%;min-height:100dvh}
   .slate-school-name,
   .slate-mascot-name{
     font-size:13px;
-  }
-}
-
-
-/* TrackPicks V2.2.3.3 — team display overrides and descender-safe typography */
-.slate-school-name,
-.slate-mascot-name{
-  line-height:1.18;
-  padding-bottom:1px;
-}
-.slate-mascot-name{
-  margin-top:4px;
-}
-.slate-team-smaller-font .slate-school-name,
-.slate-team-smaller-font .slate-mascot-name{
-  font-size:12px;
-}
-@media(max-width:390px){
-  .slate-school-name,
-  .slate-mascot-name{
     line-height:1.18;
   }
   .slate-mascot-name{
     margin-top:3px;
   }
-  .slate-team-smaller-font .slate-school-name,
-  .slate-team-smaller-font .slate-mascot-name{
-    font-size:11.5px;
-  }
-}
-
-
-/* TrackPicks V2.2.3.4 — separate school/nickname font overrides */
-.slate-team-smaller-font .slate-school-name{
-  font-size:13.25px;
-}
-.slate-team-smaller-font .slate-mascot-name{
-  font-size:14px;
-}
-.slate-team-smaller-nickname .slate-mascot-name{
-  font-size:12.75px;
-}
-@media(max-width:390px){
-  .slate-team-smaller-font .slate-school-name{
-    font-size:12.5px;
-  }
-  .slate-team-smaller-font .slate-mascot-name{
-    font-size:13px;
-  }
-  .slate-team-smaller-nickname .slate-mascot-name{
-    font-size:11.75px;
-  }
-}
-
-
-/* TrackPicks V2.2.3.5 — nickname sizing + Hawaii exception */
-.slate-team-smaller-nickname .slate-mascot-name{
-  font-size:12.5px;
-}
-.slate-team-extra-small-nickname .slate-mascot-name{
-  font-size:11.75px;
-}
-@media(max-width:390px){
-  .slate-team-smaller-nickname .slate-mascot-name{
-    font-size:11.5px;
-  }
-  .slate-team-extra-small-nickname .slate-mascot-name{
-    font-size:10.75px;
-  }
-}
-
-
-/* TrackPicks V2.2.3.6 — final fine-tuning of exception font tiers */
-.slate-team-smaller-font .slate-school-name{
-  font-size:13px;
-}
-.slate-team-smaller-nickname .slate-mascot-name{
-  font-size:12.2px;
-}
-.slate-team-extra-small-nickname .slate-mascot-name{
-  font-size:10.75px;
-}
-@media(max-width:390px){
   .slate-team-smaller-font .slate-school-name{
     font-size:12.25px;
   }
-  .slate-team-smaller-nickname .slate-mascot-name{
-    font-size:11.2px;
-  }
-  .slate-team-extra-small-nickname .slate-mascot-name{
-    font-size:9.75px;
-  }
-}
-
-
-/* TrackPicks V2.2.3.7 — final nickname fit tuning */
-.slate-team-smaller-nickname .slate-mascot-name{
-  font-size:11.9px;
-}
-.slate-team-extra-small-nickname .slate-mascot-name{
-  font-size:10.5px;
-}
-@media(max-width:390px){
   .slate-team-smaller-nickname .slate-mascot-name{
     font-size:10.9px;
   }
   .slate-team-extra-small-nickname .slate-mascot-name{
     font-size:9.5px;
   }
+  .slate-spread-box,
+  .slate-total-box{
+    min-height:42px;
+    padding:5px 7px;
+  }
+  .slate-spread-box .slate-market-abbr,
+  .slate-total-box .slate-ou-label{
+    font-size:12px;
+  }
+  .slate-spread-box .slate-market-value strong,
+  .slate-total-box .slate-market-value strong{
+    font-size:15px;
+  }
 }
 
 
-/* TrackPicks V2.2.4 — network logo asset overrides */
-.slate-tv .tv-network-abc-full-slate{
-  max-width:84px;
-  max-height:18px;
-  width:auto;
-  height:auto;
-  object-fit:contain;
+/* TrackPicks V2.2.4.2 — authoritative bottom navigation */
+.app-shell{
+  padding-bottom:calc(78px + env(safe-area-inset-bottom,0px));
+}
+.page{
+  padding-bottom:calc(92px + env(safe-area-inset-bottom,0px));
+}
+.bottom-nav{
+  position:fixed !important;
+  left:50% !important;
+  right:auto !important;
+  bottom:0 !important;
+  top:auto !important;
+  transform:translate3d(-50%,0,0) !important;
+  width:min(760px,100%) !important;
+  max-width:760px;
+  min-height:58px;
+  margin:0 !important;
+  padding:8px 10px max(8px,env(safe-area-inset-bottom,0px));
+  background:rgba(255,255,255,.98);
+  border-top:1px solid var(--line);
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+  align-items:center;
+  box-sizing:border-box;
+  z-index:1000 !important;
+  overflow:hidden;
+  -webkit-transform:translate3d(-50%,0,0) !important;
+  will-change:transform;
+}
+.bottom-nav .nav-btn{
+  min-width:0;
+  width:100%;
+  height:42px;
+  min-height:42px;
+  padding:0 10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  line-height:1;
 }
