@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.5.1';
+const BUILD_VERSION = '2.2.5.2';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -138,7 +138,7 @@ const state = {
   weeks: Array.from({ length: 12 }, (_, i) => ({ week: i + 1, enabled: i + 1 >= 4 })),
   games: [], wagers: [], cautionGameIds: [], oddsHistory: [],
   cfbTeams: [], cfbAliases: [],
-  slateDivision: 'FBS', slateConference: 'All',
+  slateDivision: 'FBS', slateConference: 'All', slateSearch: '',
   parlays: [], parlayLegs: [], slipTab: 'straight',
   parlayDraft: {id:null,legs:[],who:'',units:1,odds:'',isTeaser:false,teaserPoints:6,result:'Pending'},
   parlaySaving: false,
@@ -296,15 +296,32 @@ function gameMatchesConference(g,filter){
   if(filter==='G6')return confs.some(c=>G6_CONFERENCES.includes(c));
   return confs.includes(filter);
 }
-function filteredSlateGames(){
+function baseFilteredSlateGames(){
   const games=weekGames(state.selectedWeek);
   if(state.slateDivision==='FCS') return games.filter(g=>g.sourceSportKey==='americanfootball_ncaaf_fcs');
   return games.filter(g=>g.sourceSportKey==='americanfootball_ncaaf').filter(g=>gameMatchesConference(g,state.slateConference));
 }
+function gameMatchesSlateSearch(g,query=state.slateSearch){
+  const q=normalizeTeamName(query);
+  if(!q)return true;
+  return [g.away,g.home].some(name=>{
+    const meta=teamMetaFor(name);
+    const haystack=[
+      name,
+      resolveEspnTeamName(name),
+      meta?.espnName,
+      meta?.abbreviation,
+      meta?.shortDisplayName,
+      meta?.shortNickname
+    ].filter(Boolean).map(normalizeTeamName);
+    return haystack.some(v=>v.includes(q));
+  });
+}
+function filteredSlateGames(){ return baseFilteredSlateGames().filter(g=>gameMatchesSlateSearch(g)); }
 function renderSlateFilters(){
   const division=`<div class="slate-filter-primary"><button class="slate-filter-btn primary-filter ${state.slateDivision==='FBS'?'active':''}" data-slate-division="FBS">FBS</button><button class="slate-filter-btn primary-filter ${state.slateDivision==='FCS'?'active':''}" data-slate-division="FCS">FCS</button></div>`;
   const sub=state.slateDivision==='FBS'?`<div class="slate-filter-sub">${['All','SEC','Big Ten','Big 12','ACC','G6'].map(f=>`<button class="slate-filter-btn ${state.slateConference===f?'active':''}" data-slate-conference="${f}">${f}</button>`).join('')}</div>`:'';
-  return `<div class="slate-filter-bar">${division}<div class="slate-filter-divider"></div>${sub}</div>`;
+  return `<div class="slate-controls"><div class="slate-search-wrap"><input class="slate-search-input" data-slate-search type="search" inputmode="search" autocomplete="off" spellcheck="false" placeholder="Search teams" value="${escapeAttr(state.slateSearch||'')}" aria-label="Search teams"></div><div class="slate-filter-bar">${division}<div class="slate-filter-divider"></div>${sub}</div></div>`;
 }
 function legsForParlay(parlayId){ return state.parlayLegs.filter(l=>l.parlayId===parlayId).sort((a,b)=>a.legOrder-b.legOrder); }
 function americanToDecimalOdds(odds){
@@ -1226,9 +1243,9 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5.1 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5.2 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5.1 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5.2 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
 function headerWeekSelect(){
   const weekOptions=state.weeks
@@ -1274,21 +1291,22 @@ function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><di
 
 function renderMarket(){
   const allGames=weekGames(state.selectedWeek),
-        games=filteredSlateGames(),
+        baseGames=baseFilteredSlateGames(),
         message=state.importMessage?`<div class="notice">${state.importMessage}</div>`:'',
         filters=renderSlateFilters();
 
   if(!allGames.length)return `${message}${filters}<div class="empty"><strong>No games loaded for Week ${state.selectedWeek}.</strong><br><br>${state.isAdmin?'Open <b>Settings → Admin Tools</b> to load or refresh the weekly slate.':'The weekly board has not been published yet.'}</div>`;
-  if(!games.length)return `${message}${filters}<div class="empty compact-empty">No games match this slate filter.</div>`;
+  if(!baseGames.length)return `${message}${filters}<div class="empty compact-empty">No games match this slate filter.</div>`;
 
-  return `${message}${filters}<div class="game-list slate-game-list">${games.map(g=>{
+  const visibleCount=baseGames.filter(g=>gameMatchesSlateSearch(g)).length;
+  return `${message}${filters}<div class="game-list slate-game-list">${baseGames.map(g=>{
     const saved=wagersForGame(g.id).length;
     const k=formatKickoff(g.commenceTime);
     const caution=isCautioned(g.id);
     const signals=cardMovementSignals(g);
     const missing=!hasSpread(g)||!hasTotal(g);
 
-    return `<button class="game-row slate-game-card ${saved?'saved':''} ${caution?'cautioned':''}" data-game="${g.id}">
+    return `<button class="game-row slate-game-card ${saved?'saved':''} ${caution?'cautioned':''}" data-game="${g.id}" ${gameMatchesSlateSearch(g)?'':'hidden'}>
       <div class="slate-matchup">
         ${renderSlateTeamHero(g.away,'away')}
         <div class="slate-at" aria-hidden="true">@</div>
@@ -1310,7 +1328,7 @@ function renderMarket(){
 
       ${renderSlateStatus(saved,caution,missing)}
     </button>`;
-  }).join('')}</div>`;
+  }).join('')}</div><div class="empty compact-empty slate-search-empty" data-slate-search-empty ${visibleCount?'hidden':''}>No games match your search.</div>`;
 }
 
 function resultClassFor(result){ return result==='Win'?'result-win':result==='Loss'?'result-loss':result==='DDL'?'result-ddl':result==='Push'?'result-push':'result-pending'; }
@@ -1821,6 +1839,18 @@ function bind(){
   });
   document.querySelectorAll('[data-signout]').forEach(el=>el.onclick=async()=>{await state.sb.auth.signOut();state.showSettings=false;});
   document.querySelectorAll('[data-load-week]').forEach(el=>el.onclick=async()=>{state.showSettings=false;await loadSelectedWeek();});
+  document.querySelectorAll('[data-slate-search]').forEach(el=>el.oninput=()=>{
+    state.slateSearch=el.value||'';
+    let visible=0;
+    document.querySelectorAll('.slate-game-list [data-game]').forEach(card=>{
+      const g=gameById(card.dataset.game);
+      const show=!!g&&gameMatchesSlateSearch(g);
+      card.hidden=!show;
+      if(show)visible++;
+    });
+    const empty=document.querySelector('[data-slate-search-empty]');
+    if(empty)empty.hidden=visible>0;
+  });
   document.querySelectorAll('[data-slate-division]').forEach(el=>el.onclick=()=>{state.slateDivision=el.dataset.slateDivision;if(state.slateDivision==='FBS'&&!['All','SEC','Big Ten','Big 12','ACC','G6'].includes(state.slateConference))state.slateConference='All';render();});
   document.querySelectorAll('[data-slate-conference]').forEach(el=>el.onclick=()=>{state.slateConference=el.dataset.slateConference;state.slateDivision='FBS';render();});
   document.querySelectorAll('[data-game],[data-open-game]').forEach(el=>el.onclick=()=>{state.activeGameId=el.dataset.game||el.dataset.openGame;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
