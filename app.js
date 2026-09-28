@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.5.4';
+const BUILD_VERSION = '2.2.5.5';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
