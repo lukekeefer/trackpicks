@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.5';
+const BUILD_VERSION = '2.2.5.1';
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -1226,73 +1226,48 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5.1 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5.1 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
-function marketTopbar(){
-  const loadButton=state.isAdmin
-    ? `<button class="market-load-week" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading…':'Load Week'}</button>`
-    : `<div class="market-header-spacer" aria-hidden="true"></div>`;
-
+function headerWeekSelect(){
   const weekOptions=state.weeks
     .filter(w=>w.enabled)
     .map(w=>`<option value="${w.week}" ${w.week===state.selectedWeek?'selected':''}>Week ${w.week}</option>`)
     .join('');
+  return `<div class="app-header-week-wrap">
+    <select class="app-header-week" data-market-week aria-label="Select week">${weekOptions}</select>
+    <span class="app-header-week-chevron" aria-hidden="true">⌄</span>
+  </div>`;
+}
 
+function appHeader(leftHtml=''){
   const syncLabel=state.syncing?'Syncing…':'Cloud synced';
-
-  return `<header class="topbar market-topbar">
-    <div class="market-header-main">
-      <div class="market-header-left">${loadButton}</div>
-
-      <div class="market-brand">
-        <img src="apple-touch-icon.png" class="market-brand-logo" alt="TrackPicks">
-      </div>
-
-      <div class="market-header-right">
-        <button class="market-settings-btn" data-settings aria-label="Settings">
+  return `<header class="topbar app-main-header">
+    <div class="app-main-header-row">
+      <div class="app-header-left">${leftHtml||'<span class="app-header-left-spacer" aria-hidden="true"></span>'}</div>
+      <div class="app-header-brand"><img src="trackpicks-wordmark.png" class="app-header-wordmark" alt="TrackPicks"></div>
+      <div class="app-header-right">
+        <button class="app-settings-btn" data-settings aria-label="Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9.8 2h4.4l.6 2.4c.5.2 1 .4 1.5.7l2.2-1.2 3.1 3.1-1.2 2.2c.3.5.5 1 .7 1.5l2.4.6v4.4l-2.4.6c-.2.5-.4 1-.7 1.5l1.2 2.2-3.1 3.1-2.2-1.2c-.5.3-1 .5-1.5.7l-.6 2.4H9.8l-.6-2.4c-.5-.2-1-.4-1.5-.7l-2.2 1.2-3.1-3.1 1.2-2.2c-.3-.5-.5-1-.7-1.5l-2.4-.6v-4.4l2.4-.6c.2-.5.4-1 .7-1.5L2.4 7l3.1-3.1 2.2 1.2c.5-.3 1-.5 1.5-.7L9.8 2Z"/>
             <circle cx="12" cy="13.5" r="3.2"/>
           </svg>
         </button>
-        <div class="market-sync-note ${state.syncing?'syncing':''}">
-          <span class="market-sync-icon" aria-hidden="true">☁</span>
-          <span>${syncLabel}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="market-week-row">
-      <div class="market-week-select-wrap">
-        <select class="market-week-select" data-market-week aria-label="Select week">
-          ${weekOptions}
-        </select>
-        <span class="market-week-chevron" aria-hidden="true">⌄</span>
+        <div class="app-header-sync ${state.syncing?'syncing':''}"><span aria-hidden="true">☁</span><span>${syncLabel}</span></div>
       </div>
     </div>
   </header>`;
 }
 
+function marketTopbar(){ return appHeader(headerWeekSelect()); }
+
 function topbar(){
   if(state.view==='market')return marketTopbar();
-
-  let title='TrackPicks',
-      subtitle='Track your picks · V2.2.5',
-      action=`<div><div class="account-chip">${escapeAttr(state.user?.email||'')}</div><button class="secondary" data-settings>Settings</button></div>`;
-
-  if(state.view==='slip'){
-    title='Slip';
-    subtitle=`${weekWagers(state.selectedWeek).length} straight · ${weekParlays(state.selectedWeek).length} parlay${weekParlays(state.selectedWeek).length===1?'':'s'} · Week ${state.selectedWeek}`;
-    action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button><button class="secondary" data-action="export">Export CSV</button></div>`;
-  }
-  if(state.view==='dashboard'){
-    title='Dashboard';
-    subtitle='Season performance · V2.2.5';
-    action=`<div class="top-actions"><button class="secondary" data-settings>Settings</button></div>`;
-  }
-  return `<header class="topbar"><div class="topbar-row"><div><h1 class="title">${title}</h1><div class="subtitle">${subtitle}</div>${state.syncing?'<div class="sync-note">↻ Syncing…</div>':'<div class="sync-note">✓ Cloud synced</div>'}</div>${action}</div></header>`;
+  if(state.view==='slip')return appHeader(`<div class="app-header-screen-label">Slip</div>`);
+  if(state.view==='dashboard')return appHeader(`<div class="app-header-screen-label">Dashboard</div>`);
+  if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
+  return appHeader();
 }
 function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
@@ -1303,7 +1278,7 @@ function renderMarket(){
         message=state.importMessage?`<div class="notice">${state.importMessage}</div>`:'',
         filters=renderSlateFilters();
 
-  if(!allGames.length)return `${message}${filters}<div class="empty"><strong>No games loaded for Week ${state.selectedWeek}.</strong><br><br>${state.isAdmin?'Tap <b>Load Week</b> to pull the current DraftKings slate.':'The weekly board has not been published yet.'}</div>`;
+  if(!allGames.length)return `${message}${filters}<div class="empty"><strong>No games loaded for Week ${state.selectedWeek}.</strong><br><br>${state.isAdmin?'Open <b>Settings → Admin Tools</b> to load or refresh the weekly slate.':'The weekly board has not been published yet.'}</div>`;
   if(!games.length)return `${message}${filters}<div class="empty compact-empty">No games match this slate filter.</div>`;
 
   return `${message}${filters}<div class="game-list slate-game-list">${games.map(g=>{
@@ -1661,6 +1636,11 @@ function renderSettingsSheet(){
       <div class="api-usage-value">${apiUsageSummary()}</div>
       <div class="api-usage-note">Monthly usage reported directly by The Odds API.</div>
     </div>
+    <div class="settings-section admin-tools-section">
+      <div class="section-title">Admin Tools</div>
+      <button class="secondary full-width" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading Week…':`Load / Refresh Week ${state.selectedWeek}`}</button>
+      <div class="report-note">Pull the current DraftKings board for the selected Full Slate week.</div>
+    </div>
     <hr class="settings-divider">
   ` : '';
 
@@ -1840,7 +1820,7 @@ function bind(){
     render();
   });
   document.querySelectorAll('[data-signout]').forEach(el=>el.onclick=async()=>{await state.sb.auth.signOut();state.showSettings=false;});
-  document.querySelectorAll('[data-load-week]').forEach(el=>el.onclick=loadSelectedWeek);
+  document.querySelectorAll('[data-load-week]').forEach(el=>el.onclick=async()=>{state.showSettings=false;await loadSelectedWeek();});
   document.querySelectorAll('[data-slate-division]').forEach(el=>el.onclick=()=>{state.slateDivision=el.dataset.slateDivision;if(state.slateDivision==='FBS'&&!['All','SEC','Big Ten','Big 12','ACC','G6'].includes(state.slateConference))state.slateConference='All';render();});
   document.querySelectorAll('[data-slate-conference]').forEach(el=>el.onclick=()=>{state.slateConference=el.dataset.slateConference;state.slateDivision='FBS';render();});
   document.querySelectorAll('[data-game],[data-open-game]').forEach(el=>el.onclick=()=>{state.activeGameId=el.dataset.game||el.dataset.openGame;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
