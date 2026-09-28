@@ -1,4 +1,7 @@
-const BUILD_VERSION = '2.2.5.7';
+const BUILD_VERSION = '2.2.5.8';
+let deployedVersion = BUILD_VERSION;
+
+function versionStamp(){ return `V${BUILD_VERSION}`; }
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -93,6 +96,7 @@ async function checkForAppUpdate(){
     const latest=String(data?.version||'').trim();
     if(!latest)return;
 
+    deployedVersion=latest;
     const comparison=compareVersions(latest,BUILD_VERSION);
 
     // Prompt only when the deployed version is actually NEWER.
@@ -801,6 +805,27 @@ function formatKickoff(iso){ if(!iso)return{date:'Time TBD',time:''}; const d=ne
 function formatWeekRange(week){ const win=WEEK_WINDOWS[week]; if(!win)return''; const a=new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(new Date(win.start)); const b=new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(new Date(win.end)); return `${a}–${b}`; }
 function marketSummary(g){ const s=hasSpread(g)?`${g.spreadTeam} ${signed(g.spread)}`:'Spread unavailable'; const t=hasTotal(g)?`O/U ${g.total}`:'O/U unavailable'; return `${s} · ${t}`; }
 
+function latestOddsPullTimestamp(){
+  const timestamps=(state.oddsHistory||[])
+    .map(h=>h?.capturedAt)
+    .filter(Boolean)
+    .map(value=>new Date(value))
+    .filter(d=>!Number.isNaN(d.getTime()));
+  if(!timestamps.length)return null;
+  return new Date(Math.max(...timestamps.map(d=>d.getTime()))).toISOString();
+}
+
+function formatAdminTimestamp(iso){
+  if(!iso)return 'No successful pull recorded yet';
+  const d=new Date(iso);
+  if(Number.isNaN(d.getTime()))return 'No successful pull recorded yet';
+  return new Intl.DateTimeFormat('en-US',{
+    timeZone:'America/Chicago',
+    month:'short',day:'numeric',year:'numeric',
+    hour:'numeric',minute:'2-digit',timeZoneName:'short'
+  }).format(d);
+}
+
 function apiUsageSummary(){
   const u=state.apiUsage;
   if(!u || !Number.isFinite(u.used) || !Number.isFinite(u.remaining)) return 'Usage will appear after the next Load Week.';
@@ -1243,9 +1268,9 @@ function render(){
   bind();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5.4 · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">${versionStamp()} · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">V2.2.5.4 · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">${versionStamp()} · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
 function headerWeekSelect(){
   const weekOptions=state.weeks
@@ -1656,6 +1681,12 @@ function renderSettingsSheet(){
     </div>
     <div class="settings-section admin-tools-section">
       <div class="section-title">Admin Tools</div>
+      <div class="admin-status-card">
+        <div class="admin-status-row"><span>Version</span><strong>${versionStamp()}</strong></div>
+        <div class="admin-status-row"><span>Deployed version</span><strong>V${escapeAttr(deployedVersion||BUILD_VERSION)}</strong></div>
+        <div class="admin-status-row"><span>Service worker / cache</span><strong>V${BUILD_VERSION}</strong></div>
+        <div class="admin-status-row admin-status-row-stacked"><span>Last Odds API pull</span><strong>${escapeAttr(formatAdminTimestamp(latestOddsPullTimestamp()))}</strong></div>
+      </div>
       <button class="secondary full-width" data-load-week ${state.loadingWeek?'disabled':''}>${state.loadingWeek?'Loading Week…':`Load / Refresh Week ${state.selectedWeek}`}</button>
       <div class="report-note">Pull the current DraftKings board for the selected Full Slate week.</div>
     </div>
