@@ -984,7 +984,7 @@ html,body{min-height:100%;min-height:100dvh}
   display:none !important;
 }
 .slate-team-smaller-font .slate-school-name{
-  font-size:13px;
+  font-size:12px;
 }
 .slate-team-smaller-nickname .slate-mascot-name{
   font-size:11.9px;
@@ -1230,7 +1230,7 @@ html,body{min-height:100%;min-height:100dvh}
     font-size:10px;
   }
   .slate-team-smaller-font .slate-school-name{
-    font-size:11px;
+    font-size:10.5px;
   }
   .slate-team-smaller-nickname .slate-mascot-name{
     font-size:10.9px;

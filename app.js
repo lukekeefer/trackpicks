@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.5.8';
+const BUILD_VERSION = '2.2.5.9';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
