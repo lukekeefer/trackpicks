@@ -1415,3 +1415,12 @@ html,body{min-height:100%;min-height:100dvh}
   .app-header-week{font-size:12px}
   .app-header-sync{font-size:8px}
 }
+
+
+/* TrackPicks 2.2.5.6 — Full Slate mobile card width test */
+@media(max-width:520px){
+  .slate-game-list{
+    margin-left:-6px;
+    margin-right:-6px;
+  }
+}
