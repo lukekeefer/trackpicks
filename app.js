@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.5.9';
+const BUILD_VERSION = '2.2.5.10';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1003,7 +1003,7 @@ function renderSlateTeamHero(name,side){
   return `<div class="slate-team slate-team-${side}${smallerSchool?' slate-team-smaller-font':''}${smallerMascot?' slate-team-smaller-nickname':''}${extraSmallMascot?' slate-team-extra-small-nickname':''}" data-team-name="${escapeAttr(name)}" data-short-name="${escapeAttr(shortName)}">
     ${logo}
     <div class="slate-team-copy">
-      <div class="slate-school-name" data-school-name="${escapeAttr(parts.school)}"><span class="slate-rank">#20</span> ${escapeAttr(school)}</div>
+      <div class="slate-school-name" data-school-name="${escapeAttr(parts.school)}">${escapeAttr(school)}</div>
       ${mascot?`<div class="slate-mascot-name">${escapeAttr(mascot)}</div>`:''}
       ${state.isAdmin&&!shortName?`<div class="short-name-flag" data-short-name-flag="${escapeAttr(name)}" hidden>Needs short display name</div>`:''}
     </div>
