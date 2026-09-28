@@ -912,7 +912,7 @@ html,body{min-height:100%;min-height:100dvh}
 .game-row.slate-game-card{
   position:relative;
   display:block;
-  padding:10px 12px;
+  padding:10px 8px;
   overflow:hidden;
   cursor:pointer;
   box-shadow:0 3px 12px rgba(17,24,39,.05);
@@ -928,16 +928,16 @@ html,body{min-height:100%;min-height:100dvh}
 
 .slate-matchup{
   display:grid;
-  grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);
+  grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);
   align-items:center;
-  gap:7px;
+  gap:4px;
   padding:0 0 8px;
 }
 .slate-team{
   min-width:0;
   display:flex;
   align-items:center;
-  gap:7px;
+  gap:4px;
 }
 .slate-team-home{
   flex-direction:row-reverse;
@@ -974,6 +974,11 @@ html,body{min-height:100%;min-height:100dvh}
 }
 .slate-mascot-name{
   margin-top:4px;
+}
+.slate-rank{
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:-.15px;
 }
 .slate-team .slate-team-abbr{
   display:none !important;
@@ -1199,7 +1204,14 @@ html,body{min-height:100%;min-height:100dvh}
 
 @media(max-width:390px){
   .game-row.slate-game-card{
-    padding:9px 10px;
+    padding:9px 6px;
+  }
+  .slate-matchup{
+    grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr);
+    gap:2px;
+  }
+  .slate-team{
+    gap:3px;
   }
   .slate-team-logo{
     width:36px;
@@ -1213,6 +1225,9 @@ html,body{min-height:100%;min-height:100dvh}
   }
   .slate-mascot-name{
     margin-top:3px;
+  }
+  .slate-rank{
+    font-size:10px;
   }
   .slate-team-smaller-font .slate-school-name{
     font-size:11px;
