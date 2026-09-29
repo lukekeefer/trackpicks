@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.5.10';
+const BUILD_VERSION = '2.2.5.11';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -141,7 +141,7 @@ const state = {
   authReady: false,
   weeks: Array.from({ length: 12 }, (_, i) => ({ week: i + 1, enabled: i + 1 >= 4 })),
   games: [], wagers: [], cautionGameIds: [], oddsHistory: [],
-  cfbTeams: [], cfbAliases: [],
+  cfbTeams: [], cfbAliases: [], cfbRankings: [], lastOddsPullAt: null,
   slateDivision: 'FBS', slateConference: 'All', slateSearch: '',
   parlays: [], parlayLegs: [], slipTab: 'straight',
   parlayDraft: {id:null,legs:[],who:'',units:1,odds:'',isTeaser:false,teaserPoints:6,result:'Pending'},
@@ -212,6 +212,14 @@ function teamMetaFor(name){
   const espnName=resolveEspnTeamName(name);
   if(!espnName)return null;
   return state.cfbTeams.find(t=>t.espnName===espnName)||null;
+}
+function rankingForTeam(name,week=state.selectedWeek){
+  const meta=teamMetaFor(name);
+  const teamId=String(meta?.espnTeamId||meta?.espn_team_id||'').trim();
+  if(!teamId)return null;
+  const rows=(state.cfbRankings||[]).filter(r=>Number(r.week)===Number(week) && String(r.teamId)===teamId);
+  if(!rows.length)return null;
+  return rows.find(r=>r.pollType==='cfp')||rows.find(r=>r.pollType==='ap')||rows[0];
 }
 function teamMonogram(name){
   const words=String(name||'').replace(/\([^)]*\)/g,'').trim().split(/\s+/).filter(Boolean);
@@ -806,6 +814,7 @@ function formatWeekRange(week){ const win=WEEK_WINDOWS[week]; if(!win)return''; 
 function marketSummary(g){ const s=hasSpread(g)?`${g.spreadTeam} ${signed(g.spread)}`:'Spread unavailable'; const t=hasTotal(g)?`O/U ${g.total}`:'O/U unavailable'; return `${s} · ${t}`; }
 
 function latestOddsPullTimestamp(){
+  if(state.lastOddsPullAt)return state.lastOddsPullAt;
   const timestamps=(state.oddsHistory||[])
     .map(h=>h?.capturedAt)
     .filter(Boolean)
@@ -850,7 +859,7 @@ async function initCloud(){
       await refreshAdminStatus();
       if(state.user) await loadUserProfile();
       if(state.user) await syncFromCloud();
-      else {state.isAdmin=false;state.games=[];state.wagers=[];state.cautionGameIds=[];state.oddsHistory=[];state.cfbTeams=[];state.cfbAliases=[];}
+      else {state.isAdmin=false;state.games=[];state.wagers=[];state.cautionGameIds=[];state.oddsHistory=[];state.cfbTeams=[];state.cfbAliases=[];state.cfbRankings=[];state.lastOddsPullAt=null;}
       render();
     });
     if(state.user) await syncFromCloud();
@@ -862,23 +871,26 @@ async function syncFromCloud(){
   if(!state.sb||!state.user)return;
   state.syncing=true; render();
   try{
-    const [gamesRes,wagersRes,flagsRes,teamsRes,aliasesRes]=await Promise.all([
+    const [gamesRes,wagersRes,flagsRes,teamsRes,aliasesRes,rankingsRes]=await Promise.all([
       state.sb.from('games').select('*').eq('season',2026).gte('week',0).lte('week',12),
       state.sb.from('wagers').select('*').eq('user_id',state.user.id),
       state.sb.from('user_game_flags').select('game_id,caution').eq('user_id',state.user.id).eq('caution',true),
-      state.sb.from('cfb_teams').select('espn_name,conference,subdivision,season,abbreviation,logo_url,short_display_name,short_nickname,smaller_font,smaller_nickname_font,extra_small_nickname_font').eq('season',2026),
-      state.sb.from('cfb_team_aliases').select('provider,alias,espn_name')
+      state.sb.from('cfb_teams').select('espn_name,espn_team_id,conference,subdivision,season,abbreviation,logo_url,short_display_name,short_nickname,smaller_font,smaller_nickname_font,extra_small_nickname_font').eq('season',2026),
+      state.sb.from('cfb_team_aliases').select('provider,alias,espn_name'),
+      state.sb.from('cfb_rankings').select('season,week,poll_type,poll_name,rank,team_id,published_at').eq('season',2026).gte('week',0).lte('week',20)
     ]);
     if(gamesRes.error)throw gamesRes.error;
     if(wagersRes.error)throw wagersRes.error;
     if(flagsRes.error)throw flagsRes.error;
     if(teamsRes.error)throw teamsRes.error;
     if(aliasesRes.error)throw aliasesRes.error;
+    if(rankingsRes.error)throw rankingsRes.error;
     state.games=(gamesRes.data||[]).map(fromDbGame);
     state.wagers=(wagersRes.data||[]).map(fromDbWager);
     state.cautionGameIds=(flagsRes.data||[]).map(r=>r.game_id);
-    state.cfbTeams=(teamsRes.data||[]).map(r=>({espnName:r.espn_name,conference:r.conference,subdivision:r.subdivision,season:r.season,abbreviation:r.abbreviation||'',logoUrl:r.logo_url||'',shortDisplayName:r.short_display_name||'',shortNickname:r.short_nickname||'',smallerFont:!!r.smaller_font,smallerNicknameFont:!!r.smaller_nickname_font,extraSmallNicknameFont:!!r.extra_small_nickname_font}));
+    state.cfbTeams=(teamsRes.data||[]).map(r=>({espnName:r.espn_name,espnTeamId:r.espn_team_id||'',conference:r.conference,subdivision:r.subdivision,season:r.season,abbreviation:r.abbreviation||'',logoUrl:r.logo_url||'',shortDisplayName:r.short_display_name||'',shortNickname:r.short_nickname||'',smallerFont:!!r.smaller_font,smallerNicknameFont:!!r.smaller_nickname_font,extraSmallNicknameFont:!!r.extra_small_nickname_font}));
     state.cfbAliases=(aliasesRes.data||[]).map(r=>({provider:r.provider,alias:r.alias,espnName:r.espn_name}));
+    state.cfbRankings=(rankingsRes.data||[]).map(r=>({season:Number(r.season),week:Number(r.week),pollType:r.poll_type,pollName:r.poll_name,rank:Number(r.rank),teamId:String(r.team_id),publishedAt:r.published_at||null}));
     const historyRes=await state.sb.from('game_odds_history').select('*').eq('season',2026).gte('week',0).lte('week',12).order('captured_at',{ascending:true});
     state.oddsHistory=historyRes.error?[]:(historyRes.data||[]).map(fromDbOddsSnapshot);
     const [parlaysRes,parlayLegsRes]=await Promise.all([
@@ -994,6 +1006,8 @@ function renderSlateTeamHero(name,side){
   const nicknameOverride=(meta?.shortNickname||meta?.short_nickname||'').trim();
   const school=shortName||parts.school;
   const mascot=nicknameOverride||parts.mascot;
+  const ranking=rankingForTeam(name,state.selectedWeek);
+  const rankHtml=ranking?`<span class="slate-rank" title="${escapeAttr(ranking.pollName||ranking.pollType?.toUpperCase()||'Ranking')}">#${ranking.rank}</span>`:'';
   const smallerSchool=!!(meta?.smallerFont||meta?.smaller_font);
   const smallerMascot=!!(meta?.smallerNicknameFont||meta?.smaller_nickname_font);
   const extraSmallMascot=!!(meta?.extraSmallNicknameFont||meta?.extra_small_nickname_font);
@@ -1003,7 +1017,7 @@ function renderSlateTeamHero(name,side){
   return `<div class="slate-team slate-team-${side}${smallerSchool?' slate-team-smaller-font':''}${smallerMascot?' slate-team-smaller-nickname':''}${extraSmallMascot?' slate-team-extra-small-nickname':''}" data-team-name="${escapeAttr(name)}" data-short-name="${escapeAttr(shortName)}">
     ${logo}
     <div class="slate-team-copy">
-      <div class="slate-school-name" data-school-name="${escapeAttr(parts.school)}">${escapeAttr(school)}</div>
+      <div class="slate-school-name" data-school-name="${escapeAttr(parts.school)}">${rankHtml}${escapeAttr(school)}</div>
       ${mascot?`<div class="slate-mascot-name">${escapeAttr(mascot)}</div>`:''}
       ${state.isAdmin&&!shortName?`<div class="short-name-flag" data-short-name-flag="${escapeAttr(name)}" hidden>Needs short display name</div>`:''}
     </div>
@@ -1159,8 +1173,19 @@ async function refreshAdminStatus(){
       .eq('user_id', state.user.id)
       .single();
     state.isAdmin = !error && !!data?.is_admin;
+    if(state.isAdmin){
+      const {data:latestRows,error:latestError}=await state.sb
+        .from('game_odds_history')
+        .select('captured_at')
+        .order('captured_at',{ascending:false})
+        .limit(1);
+      state.lastOddsPullAt=!latestError && latestRows?.[0]?.captured_at ? latestRows[0].captured_at : null;
+    }else{
+      state.lastOddsPullAt=null;
+    }
   }catch(e){
     state.isAdmin = false;
+    state.lastOddsPullAt=null;
   }
 }
 
