@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.3.1.5';
+const BUILD_VERSION = '2.4.0';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -893,7 +893,7 @@ async function syncFromCloud(){
     state.cfbTeams=(teamsRes.data||[]).map(r=>({espnName:r.espn_name,espnTeamId:r.espn_team_id||'',conference:r.conference,subdivision:r.subdivision,season:r.season,abbreviation:r.abbreviation||'',logoUrl:r.logo_url||'',shortDisplayName:r.short_display_name||'',shortNickname:r.short_nickname||'',smallerFont:!!r.smaller_font,smallerNicknameFont:!!r.smaller_nickname_font,extraSmallNicknameFont:!!r.extra_small_nickname_font}));
     state.cfbAliases=(aliasesRes.data||[]).map(r=>({provider:r.provider,alias:r.alias,espnName:r.espn_name}));
     state.cfbRankings=(rankingsRes.data||[]).map(r=>({season:Number(r.season),week:Number(r.week),pollType:r.poll_type,pollName:r.poll_name,rank:Number(r.rank),teamId:String(r.team_id),publishedAt:r.published_at||null}));
-    const historyRes=await state.sb.from('game_odds_history').select('*').eq('season',2026).gte('week',0).lte('week',12).order('captured_at',{ascending:true});
+    const historyRes=await fetchAllOddsHistory();
     state.oddsHistory=historyRes.error?[]:(historyRes.data||[]).map(fromDbOddsSnapshot);
     const [parlaysRes,parlayLegsRes]=await Promise.all([
       state.sb.from('parlays').select('*').eq('user_id',state.user.id).eq('season',2026).gte('week',0).lte('week',12).order('created_at',{ascending:true}),
@@ -903,6 +903,27 @@ async function syncFromCloud(){
     state.parlayLegs=parlayLegsRes.error?[]:(parlayLegsRes.data||[]).map(fromDbParlayLeg);
   }catch(err){ state.importMessage=`Sync failed: ${err.message||err}`; }
   finally{ state.syncing=false; }
+}
+
+async function fetchAllOddsHistory(){
+  const pageSize=1000;
+  let from=0;
+  const rows=[];
+  while(true){
+    const res=await state.sb.from('game_odds_history')
+      .select('*')
+      .eq('season',2026)
+      .gte('week',0)
+      .lte('week',12)
+      .order('captured_at',{ascending:true})
+      .range(from,from+pageSize-1);
+    if(res.error)return {data:rows,error:res.error};
+    const page=res.data||[];
+    rows.push(...page);
+    if(page.length<pageSize)break;
+    from+=pageSize;
+  }
+  return {data:rows,error:null};
 }
 
 function fromDbGame(r){ return {id:r.id,sourceEventId:r.source_event_id,sourceSportKey:r.source_sport_key,week:r.week,away:r.away,home:r.home,spreadTeam:r.spread_team,spread:r.spread==null?null:Number(r.spread),total:r.total==null?null:Number(r.total),awaySpreadOdds:r.away_spread_odds==null?null:Number(r.away_spread_odds),homeSpreadOdds:r.home_spread_odds==null?null:Number(r.home_spread_odds),overOdds:r.over_odds==null?null:Number(r.over_odds),underOdds:r.under_odds==null?null:Number(r.under_odds),awayMoneyline:r.away_moneyline==null?null:Number(r.away_moneyline),homeMoneyline:r.home_moneyline==null?null:Number(r.home_moneyline),commenceTime:r.commence_time,marketUpdatedAt:r.market_updated_at,tv:r.tv_network||r.tv||'',location:r.location||'',espnEventId:r.espn_event_id||'',venueName:r.venue_name||'',venueCity:r.venue_city||'',venueState:r.venue_state||'',awayScore:r.away_score==null?null:Number(r.away_score),homeScore:r.home_score==null?null:Number(r.home_score),gameCompleted:!!r.game_completed,gameStatus:r.game_status||'',resultsUpdatedAt:r.espn_results_updated_at||null}; }
@@ -1644,7 +1665,7 @@ function renderGameTeamRecord(teamName){
   const meta=teamMetaFor(teamName),teamId=meta?.espnTeamId?String(meta.espnTeamId):'';
   const rec=teamId?state.gameTeamStats?.[teamId]:null;
   const fmt=formatRecordTriplet(rec);
-  return `<div class="game-team-record"><span><b>${fmt.overall}</b> Overall</span><span><b>${fmt.ats}</b> ATS</span><span><b>${fmt.overs}</b> Overs</span></div>`;
+  return `<div class="game-team-record"><span><small>Overall</small><b>${fmt.overall}</b></span><span><small>ATS</small><b>${fmt.ats}</b></span><span><small>Overs</small><b>${fmt.overs}</b></span></div>`;
 }
 async function loadGameTeamStats(g){
   if(!state.sb||!g)return;
