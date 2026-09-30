@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.3.1.4';
+const BUILD_VERSION = '2.3.1.5';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -150,7 +150,8 @@ const state = {
   gradingReviews: {straight:{},parlays:{}},
   pickerOptions: ['Keef','Wilson','Both','Tail'],
   historyChartKind: null,
-  activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: ''
+  activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
+  gameTeamStats: {}, gameTeamStatsLoading: false
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -908,7 +909,22 @@ function fromDbGame(r){ return {id:r.id,sourceEventId:r.source_event_id,sourceSp
 function toDbGame(g){ return {id:g.id,source_event_id:g.sourceEventId||null,source_sport_key:g.sourceSportKey||null,season:2026,week:g.week,away:g.away,home:g.home,spread_team:g.spreadTeam||null,spread:g.spread,total:g.total,commence_time:g.commenceTime,market_updated_at:g.marketUpdatedAt||null,tv:g.tv||'',location:g.location||'',updated_at:new Date().toISOString()}; }
 function fromDbOddsSnapshot(r){ return {id:r.id,gameId:r.game_id,week:r.week,spreadTeam:r.spread_team,spread:r.spread==null?null:Number(r.spread),total:r.total==null?null:Number(r.total),marketUpdatedAt:r.market_updated_at,capturedAt:r.captured_at}; }
 function toDbOddsSnapshot(g,capturedAt){ return {game_id:g.id,season:2026,week:g.week,spread_team:g.spreadTeam||null,spread:g.spread,total:g.total,market_updated_at:g.marketUpdatedAt||null,captured_at:capturedAt}; }
-function oddsHistoryForGame(gameId){ return state.oddsHistory.filter(h=>h.gameId===gameId).sort((a,b)=>new Date(a.capturedAt)-new Date(b.capturedAt)); }
+function relatedGameIdsForHistory(gameOrId){
+  const g=typeof gameOrId==='object'&&gameOrId?gameOrId:gameById(gameOrId);
+  const seedId=typeof gameOrId==='string'?gameOrId:g?.id;
+  const ids=new Set(seedId?[seedId]:[]);
+  if(!g)return ids;
+  for(const candidate of state.games||[]){
+    const sameEspn=g.espnEventId&&candidate.espnEventId&&String(candidate.espnEventId)===String(g.espnEventId);
+    const sameMatchup=Number(candidate.week)===Number(g.week)&&candidate.away===g.away&&candidate.home===g.home;
+    if(sameEspn||sameMatchup)ids.add(candidate.id);
+  }
+  return ids;
+}
+function oddsHistoryForGame(gameOrId){
+  const ids=relatedGameIdsForHistory(gameOrId);
+  return state.oddsHistory.filter(h=>ids.has(h.gameId)).sort((a,b)=>new Date(a.capturedAt)-new Date(b.capturedAt));
+}
 function spreadForTeamFromSnapshot(h,team){ if(h?.spread==null||!h.spreadTeam)return null; return h.spreadTeam===team?h.spread:-h.spread; }
 
 function spreadMovementSignal(previous,current){
@@ -939,7 +955,7 @@ function cardSpreadValue(g){
   return fmtSpread(g,team);
 }
 function cardMovementSignals(g){
-  const history=oddsHistoryForGame(g.id);
+  const history=oddsHistoryForGame(g);
   if(!history.length)return {spread:null,total:null};
 
   const first=history[0];
@@ -1083,7 +1099,7 @@ function detectSlateShortNameNeeds(){
 
 
 function movementForGame(g){
-  const history=oddsHistoryForGame(g.id);
+  const history=oddsHistoryForGame(g);
   if(!history.length)return null;
   const first=history[0];
   const firstHome=spreadForTeamFromSnapshot(first,g.home), currentHome=fmtSpread(g,g.home);
@@ -1104,7 +1120,7 @@ function movementSummary(g){
   return bits.join(' · ');
 }
 function compactOddsHistory(g){
-  const rows=oddsHistoryForGame(g.id);
+  const rows=oddsHistoryForGame(g);
   const compact=[];
   rows.forEach(h=>{
     const homeSpread=spreadForTeamFromSnapshot(h,g.home);
@@ -1122,7 +1138,7 @@ function renderMovementHistory(g){
 }
 
 function historyChartPoints(g,kind){
-  const rows=oddsHistoryForGame(g.id);
+  const rows=oddsHistoryForGame(g);
   return rows.map(h=>({
     capturedAt:h.capturedAt,
     value:kind==='Spread'?spreadForTeamFromSnapshot(h,g.home):h.total
@@ -1130,14 +1146,18 @@ function historyChartPoints(g,kind){
 }
 function renderHistorySvg(points,kind,g){
   if(points.length<2)return '<div class="chart-empty">Not enough snapshots to graph yet.</div>';
-  const W=620,H=270,L=48,R=18,T=20,B=42;
+  const W=620,H=270,L=54,R=18,T=20,B=42,STEP=.5;
   const times=points.map(p=>new Date(p.capturedAt).getTime()), vals=points.map(p=>Number(p.value));
   let minT=Math.min(...times),maxT=Math.max(...times);if(maxT===minT)maxT=minT+1;
-  let minV=Math.min(...vals),maxV=Math.max(...vals);if(maxV===minV){minV-=1;maxV+=1;}else{const pad=Math.max(.5,(maxV-minV)*.18);minV-=pad;maxV+=pad;}
+  let dataMin=Math.min(...vals),dataMax=Math.max(...vals);
+  let minV=Math.floor(dataMin/STEP)*STEP,maxV=Math.ceil(dataMax/STEP)*STEP;
+  if(maxV===minV){minV-=STEP;maxV+=STEP;}else{minV-=STEP;maxV+=STEP;}
+  minV=Number(minV.toFixed(1));maxV=Number(maxV.toFixed(1));
   const x=t=>L+((t-minT)/(maxT-minT))*(W-L-R), y=v=>T+(1-(v-minV)/(maxV-minV))*(H-T-B);
   const coords=points.map((p,i)=>({x:x(times[i]),y:y(vals[i]),p}));
   const path=coords.map((c,i)=>`${i?'L':'M'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
-  const grid=[0,.25,.5,.75,1].map(fr=>{const v=maxV-(maxV-minV)*fr,yy=T+(H-T-B)*fr;return `<line x1="${L}" y1="${yy.toFixed(1)}" x2="${W-R}" y2="${yy.toFixed(1)}" class="chart-grid-line"/><text x="${L-8}" y="${(yy+4).toFixed(1)}" text-anchor="end" class="chart-axis-text">${kind==='Spread'?signed(Number(v.toFixed(1))):Number(v.toFixed(1))}</text>`;}).join('');
+  const ticks=[];for(let v=maxV;v>=minV-0.001;v-=STEP)ticks.push(Number(v.toFixed(1)));
+  const grid=ticks.map(v=>{const yy=y(v);return `<line x1="${L}" y1="${yy.toFixed(1)}" x2="${W-R}" y2="${yy.toFixed(1)}" class="chart-grid-line"/><text x="${L-8}" y="${(yy+4).toFixed(1)}" text-anchor="end" class="chart-axis-text">${kind==='Spread'?signed(v):v}</text>`;}).join('');
   const dots=coords.map(c=>{const when=formatKickoff(c.p.capturedAt);const label=kind==='Spread'?`${g.home} ${signed(c.p.value)}`:`O/U ${c.p.value}`;return `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="5" class="chart-dot"><title>${when.date} ${when.time} — ${label}</title></circle>`;}).join('');
   const first=formatKickoff(points[0].capturedAt),last=formatKickoff(points[points.length-1].capturedAt);
   return `<svg class="history-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${kind} line history">${grid}<path d="${path}" class="chart-line"/>${dots}<text x="${L}" y="${H-12}" class="chart-axis-text">${first.date} ${first.time}</text><text x="${W-R}" y="${H-12}" text-anchor="end" class="chart-axis-text">${last.date} ${last.time}</text></svg>`;
@@ -1337,7 +1357,7 @@ function topbar(){
   if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
   return appHeader();
 }
-function bottomNav(){ if(state.view==='weeks')return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
+function bottomNav(){ if(state.view==='weeks'||state.activeGameId||state.activeTeamId)return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
 function renderMarket(){
@@ -1601,9 +1621,9 @@ function teamScreenLineFor(g,teamId){
   if(!Number.isFinite(n))return null;
   return String(g.closing_spread_team_id)===String(teamId)?n:-n;
 }
-function teamScreenRecord(teamId){
+function teamRecordFromGames(games,teamId){
   let wins=0,losses=0,ties=0,atsWins=0,atsLosses=0,atsPushes=0,overWins=0,overLosses=0,overPushes=0;
-  for(const g of state.teamScreenGames||[]){
+  for(const g of games||[]){
     const r=teamScreenResultFor(g,teamId);
     if(r==='W')wins++;else if(r==='L')losses++;else if(r==='T')ties++;
     const a=teamScreenAtsFor(g,teamId);
@@ -1611,6 +1631,41 @@ function teamScreenRecord(teamId){
     if(g.total_result==='Over')overWins++;else if(g.total_result==='Under')overLosses++;else if(g.total_result==='Push')overPushes++;
   }
   return {wins,losses,ties,atsWins,atsLosses,atsPushes,overWins,overLosses,overPushes};
+}
+function teamScreenRecord(teamId){return teamRecordFromGames(state.teamScreenGames||[],teamId);}
+function formatRecordTriplet(rec){
+  if(!rec)return {overall:'—',ats:'—',overs:'—'};
+  const overall=`${rec.wins}-${rec.losses}${rec.ties?`-${rec.ties}`:''}`;
+  const ats=`${rec.atsWins}-${rec.atsLosses}${rec.atsPushes?`-${rec.atsPushes}`:''}`;
+  const overs=`${rec.overWins}-${rec.overLosses}${rec.overPushes?`-${rec.overPushes}`:''}`;
+  return {overall,ats,overs};
+}
+function renderGameTeamRecord(teamName){
+  const meta=teamMetaFor(teamName),teamId=meta?.espnTeamId?String(meta.espnTeamId):'';
+  const rec=teamId?state.gameTeamStats?.[teamId]:null;
+  const fmt=formatRecordTriplet(rec);
+  return `<div class="game-team-record"><span><b>${fmt.overall}</b> Overall</span><span><b>${fmt.ats}</b> ATS</span><span><b>${fmt.overs}</b> Overs</span></div>`;
+}
+async function loadGameTeamStats(g){
+  if(!state.sb||!g)return;
+  const metas=[teamMetaFor(g.away),teamMetaFor(g.home)].filter(m=>m?.espnTeamId);
+  const unique=[...new Map(metas.map(m=>[String(m.espnTeamId),m])).values()];
+  if(!unique.length)return;
+  state.gameTeamStatsLoading=true;
+  try{
+    const results=await Promise.all(unique.map(async meta=>{
+      const teamId=String(meta.espnTeamId);
+      const {data,error}=await state.sb.from('team_season_games')
+        .select('week,away_team_id,home_team_id,away_score,home_score,game_completed,away_ats_result,home_ats_result,total_result')
+        .eq('season',2026)
+        .or(`away_team_id.eq.${teamId},home_team_id.eq.${teamId}`);
+      return {teamId,data:error?[]:(data||[])};
+    }));
+    for(const item of results)state.gameTeamStats[item.teamId]=teamRecordFromGames(item.data,item.teamId);
+  }finally{
+    state.gameTeamStatsLoading=false;
+    if(state.activeGameId===g.id)render();
+  }
 }
 function renderTeamScreen(){
   const teamId=String(state.activeTeamId||'');
@@ -1718,19 +1773,17 @@ function renderGameSheet(){
   const k=formatKickoff(g.commenceTime);
   const venue=gameVenueText(g);
 
-  return `<div class="overlay">
-    <section class="sheet game-detail-sheet">
-      <div class="sheet-handle"></div>
-
-      <div class="game-sheet-close">
-        <button class="icon-btn" data-close aria-label="Close">✕</button>
-      </div>
+  return `<div class="game-page-overlay">
+    <section class="game-page-sheet">
+      <div class="game-page-top"><button class="game-back-btn" data-close aria-label="Back">‹</button><div class="game-page-title">Game</div><span class="game-page-top-spacer"></span></div>
+      <div class="game-page-scroll">
 
       <section class="matchup-hero reference-hero">
         <div class="matchup-team">
           <button type="button" class="matchup-logo-button" data-open-team="${escapeAttr(g.away)}" aria-label="Open ${escapeAttr(g.away)} team page">${renderTeamLogo(g.away)}</button>
           <div class="matchup-team-name">${escapeAttr(g.away)}</div>
           <div class="matchup-team-role">Away</div>
+          ${renderGameTeamRecord(g.away)}
         </div>
 
         <div class="matchup-center reference-at"><div class="matchup-at">@</div></div>
@@ -1739,6 +1792,7 @@ function renderGameSheet(){
           <button type="button" class="matchup-logo-button" data-open-team="${escapeAttr(g.home)}" aria-label="Open ${escapeAttr(g.home)} team page">${renderTeamLogo(g.home)}</button>
           <div class="matchup-team-name">${escapeAttr(g.home)}</div>
           <div class="matchup-team-role">Home</div>
+          ${renderGameTeamRecord(g.home)}
         </div>
       </section>
 
@@ -1797,6 +1851,7 @@ function renderGameSheet(){
         </div>
         <button class="primary ${state.saving?'saved-confirmation':''}" data-save-wager ${state.saving?'disabled':''}>${state.saving?'✓ Saved':(editing?'Save Changes':'Confirm Bet')}</button>
         ${editing?'':`<button class="secondary add-to-parlay-btn" data-add-to-parlay>+ Add to Parlay</button>`}
+      </div>
       </div>
     </section>
   </div>`;
@@ -2022,7 +2077,7 @@ function bind(){
   });
   document.querySelectorAll('[data-slate-division]').forEach(el=>el.onclick=()=>{state.slateDivision=el.dataset.slateDivision;if(state.slateDivision==='FBS'&&!['All','SEC','Big Ten','Big 12','ACC','G6'].includes(state.slateConference))state.slateConference='All';render();});
   document.querySelectorAll('[data-slate-conference]').forEach(el=>el.onclick=()=>{state.slateConference=el.dataset.slateConference;state.slateDivision='FBS';render();});
-  document.querySelectorAll('[data-game],[data-open-game]').forEach(el=>el.onclick=()=>{state.activeGameId=el.dataset.game||el.dataset.openGame;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
+  document.querySelectorAll('[data-game],[data-open-game]').forEach(el=>el.onclick=()=>{state.activeGameId=el.dataset.game||el.dataset.openGame;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;render();const g=gameById(state.activeGameId);if(g)loadGameTeamStats(g);});
   document.querySelectorAll('[data-open-team]').forEach(el=>el.onclick=(event)=>{event.preventDefault();event.stopPropagation();openTeamScreen(el.dataset.openTeam);});
   document.querySelectorAll('[data-close-team]').forEach(el=>el.onclick=()=>{state.activeTeamId=null;state.activeTeamName='';state.teamScreenGames=[];state.teamScreenLoading=false;state.teamScreenError='';render();});
   document.querySelectorAll('[data-close]').forEach(el=>el.onclick=()=>{state.activeGameId=null;state.editWagerId=null;state.historyChartKind=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
@@ -2055,7 +2110,7 @@ function bind(){
   });
   document.querySelectorAll('[data-set-parlay-result]').forEach(el=>el.onclick=()=>setParlayResult(el.dataset.setParlayResult,el.dataset.result));
   ['parlayOddsInput','parlayUnitsInput','parlayWhoInput','teaserPointsInput'].forEach(id=>{const el=document.getElementById(id);if(el){el.oninput=captureParlayDraftInputs;el.onchange=()=>{captureParlayDraftInputs();render();};}});
-  document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>{const w=state.wagers.find(x=>x.id===el.dataset.edit);if(!w||!gameById(w.gameId))return;state.activeGameId=w.gameId;state.editWagerId=w.id;tempWho=w.who||state.displayName;tempLine=String(w.line??'');tempPayout=String(w.payoutOdds??(w.betType==='Moneyline'?w.marketMoneyline:-110)??-110);tempUnits=String(w.units??1);state.saving=false;tempKind=w.betType;tempSelection=w.selection;render();});
+  document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>{const w=state.wagers.find(x=>x.id===el.dataset.edit);const g=w?gameById(w.gameId):null;if(!w||!g)return;state.activeGameId=w.gameId;state.editWagerId=w.id;tempWho=w.who||state.displayName;tempLine=String(w.line??'');tempPayout=String(w.payoutOdds??(w.betType==='Moneyline'?w.marketMoneyline:-110)??-110);tempUnits=String(w.units??1);state.saving=false;tempKind=w.betType;tempSelection=w.selection;render();loadGameTeamStats(g);});
   document.querySelectorAll('[data-remove]').forEach(el=>el.onclick=()=>removeWager(el.dataset.remove));
   document.querySelectorAll('[data-result-menu]').forEach(el=>el.onclick=()=>{const id=el.dataset.resultMenu;document.querySelectorAll('[data-result-picker-for]').forEach(p=>{p.hidden=p.dataset.resultPickerFor!==id?true:!p.hidden;});});
   document.querySelectorAll('[data-set-result]').forEach(el=>el.onclick=async()=>{const id=el.dataset.setResult,result=el.dataset.result;const {error}=await state.sb.from('wagers').update({result,updated_at:new Date().toISOString()}).eq('id',id).eq('user_id',state.user.id);if(error){alert(`Could not update result: ${error.message}`);return;}const w=state.wagers.find(x=>x.id===id);if(w)w.result=result;const card=el.closest('.slip-card');const picker=card?.querySelector('.result-picker');if(picker)picker.hidden=true;const badge=card?.querySelector('.result-badge');if(badge){badge.className='result-badge result-saved';badge.textContent='✓ Saved';}const menuBtn=card?.querySelector('[data-result-menu]');if(menuBtn)menuBtn.textContent='Edit Result';setTimeout(()=>render(),1600);});

@@ -1527,3 +1527,21 @@ html,body{min-height:100%;min-height:100dvh}
   .team-game-metrics span{font-size:7px}
   .team-game-metrics strong{font-size:10px}
 }
+
+
+/* TrackPicks 2.3.1.5 — full-screen Game Screen + team records */
+.game-page-overlay{position:fixed;inset:0;z-index:80;background:#fff;display:block;overflow:hidden}
+.game-page-sheet{width:100%;height:100vh;height:100dvh;max-width:760px;margin:0 auto;background:#fff;display:flex;flex-direction:column;overflow:hidden}
+.game-page-top{flex:0 0 auto;display:grid;grid-template-columns:44px 1fr 44px;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.98);z-index:2}
+.game-back-btn{width:40px;height:40px;border:0;background:#f3f4f6;border-radius:14px;font-size:32px;line-height:1;color:#111827;cursor:pointer}
+.game-page-title{text-align:center;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.game-page-top-spacer{display:block}
+.game-page-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding:16px 16px calc(28px + env(safe-area-inset-bottom,0px))}
+.game-team-record{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 8px;margin-top:7px;color:#667085;font-size:9px;line-height:1.25}
+.game-team-record span{white-space:nowrap}
+.game-team-record b{color:#101828;font-size:10px}
+@media(max-width:520px){
+  .game-page-scroll{padding-left:14px;padding-right:14px}
+  .game-team-record{gap:3px 6px;font-size:8px}
+  .game-team-record b{font-size:9px}
+}
