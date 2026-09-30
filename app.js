@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.4.4';
+const BUILD_VERSION = '2.4.5';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1614,6 +1614,16 @@ function renderSlip(){
   const pushControls=`<div class="push-results-row"><button class="primary push-results-btn" data-push-results ${state.pushingResults?'disabled':''}>${state.pushingResults?'Checking Results…':'Push Results'}</button>${state.pushResultsMessage?`<div class="push-results-message">${escapeAttr(state.pushResultsMessage)}</div>`:''}</div>`;
   return `<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
 }
+function wagerMovementSignals(g){
+  const history=oddsHistoryForGame(g);
+  if(!history.length)return {awaySpread:null,homeSpread:null,total:null};
+  const first=history[0];
+  return {
+    awaySpread:spreadMovementSignal(spreadForTeamFromSnapshot(first,g.away),fmtSpread(g,g.away)),
+    homeSpread:spreadMovementSignal(spreadForTeamFromSnapshot(first,g.home),fmtSpread(g,g.home)),
+    total:totalMovementSignal(first.total,g.total)
+  };
+}
 function renderChoiceArea(g,kind,selection){
   const spreadAvailable=hasSpread(g), totalAvailable=hasTotal(g);
   const awayLine=spreadAvailable?signed(fmtSpread(g,g.away)):'—';
@@ -1621,21 +1631,27 @@ function renderChoiceArea(g,kind,selection){
   const totalLine=totalAvailable?g.total:'—';
   const awayMl=g.awayMoneyline==null?'—':formatAmericanOdds(g.awayMoneyline);
   const homeMl=g.homeMoneyline==null?'—':formatAmericanOdds(g.homeMoneyline);
+  const moves=wagerMovementSignals(g);
+  const totalArrow=moves.total==='up'
+    ? `<span class="market-move market-move-up" aria-label="Total rising">↑</span>`
+    : moves.total==='down'
+      ? `<span class="market-move market-move-down" aria-label="Total falling">↓</span>`
+      : '';
   return `<div class="wager-market-list">
     <div class="wager-market-row">
       <div class="wager-market-label">${renderMiniTeamLogo(g.away)}<strong>${escapeAttr(g.away)}</strong></div>
-      <button class="choice-btn wager-price-btn ${kind==='Spread'&&selection===g.away?'selected':''}" data-bet-kind="Spread" data-selection="${escapeAttr(g.away)}" ${spreadAvailable?'':'disabled'}>${awayLine}</button>
+      <button class="choice-btn wager-price-btn ${kind==='Spread'&&selection===g.away?'selected':''}" data-bet-kind="Spread" data-selection="${escapeAttr(g.away)}" ${spreadAvailable?'':'disabled'}><span class="wager-line-with-move">${awayLine}${renderMovementArrow(moves.awaySpread,g.away)}</span></button>
       <button class="choice-btn wager-price-btn ${kind==='Moneyline'&&selection===g.away?'selected':''}" data-bet-kind="Moneyline" data-selection="${escapeAttr(g.away)}" ${g.awayMoneyline!=null?'':'disabled'}>${awayMl}</button>
     </div>
     <div class="wager-market-row">
       <div class="wager-market-label">${renderMiniTeamLogo(g.home)}<strong>${escapeAttr(g.home)}</strong></div>
-      <button class="choice-btn wager-price-btn ${kind==='Spread'&&selection===g.home?'selected':''}" data-bet-kind="Spread" data-selection="${escapeAttr(g.home)}" ${spreadAvailable?'':'disabled'}>${homeLine}</button>
+      <button class="choice-btn wager-price-btn ${kind==='Spread'&&selection===g.home?'selected':''}" data-bet-kind="Spread" data-selection="${escapeAttr(g.home)}" ${spreadAvailable?'':'disabled'}><span class="wager-line-with-move">${homeLine}${renderMovementArrow(moves.homeSpread,g.home)}</span></button>
       <button class="choice-btn wager-price-btn ${kind==='Moneyline'&&selection===g.home?'selected':''}" data-bet-kind="Moneyline" data-selection="${escapeAttr(g.home)}" ${g.homeMoneyline!=null?'':'disabled'}>${homeMl}</button>
     </div>
     <div class="wager-market-row">
       <div class="wager-market-label wager-total-label"><span class="total-bars" aria-hidden="true"><i></i><i></i><i></i></span><strong>Total</strong></div>
-      <button class="choice-btn wager-price-btn total-price-btn ${kind==='Total'&&selection==='Over'?'selected':''}" data-bet-kind="Total" data-selection="Over" ${totalAvailable?'':'disabled'}>Over ${totalLine}</button>
-      <button class="choice-btn wager-price-btn total-price-btn ${kind==='Total'&&selection==='Under'?'selected':''}" data-bet-kind="Total" data-selection="Under" ${totalAvailable?'':'disabled'}>Under ${totalLine}</button>
+      <button class="choice-btn wager-price-btn total-price-btn ${kind==='Total'&&selection==='Over'?'selected':''}" data-bet-kind="Total" data-selection="Over" ${totalAvailable?'':'disabled'}><span class="total-price-label">Over</span><span class="total-price-line">${totalLine}${totalArrow}</span></button>
+      <button class="choice-btn wager-price-btn total-price-btn ${kind==='Total'&&selection==='Under'?'selected':''}" data-bet-kind="Total" data-selection="Under" ${totalAvailable?'':'disabled'}><span class="total-price-label">Under</span><span class="total-price-line">${totalLine}${totalArrow}</span></button>
     </div>
   </div>`;
 }
@@ -1876,9 +1892,7 @@ function renderGameSheet(){
         </div>
       </div>
 
-      <section class="movement-card">
-        <div class="movement-title">Line movement</div>
-        ${renderMovementOverview(g)}
+      <section class="movement-card movement-card-graphs-only">
         <div class="history-buttons">
           <button type="button" class="secondary history-btn" data-open-history="Spread" ${historyChartPoints(g,'Spread').length<2?'disabled':''}>Spread Graph</button>
           <button type="button" class="secondary history-btn" data-open-history="Total" ${historyChartPoints(g,'Total').length<2?'disabled':''}>Total Graph</button>
