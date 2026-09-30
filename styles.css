@@ -1769,3 +1769,5 @@ html,body{min-height:100%;min-height:100dvh}
 /* 2.5.3 screenshot game matching */
 .import-status-chip.matched{background:#ecfdf3;color:#067647}.import-status-chip.wrong-week{background:#fef3f2;color:#b42318}
 .parsed-bet-match{display:grid;gap:2px;background:#ecfdf3;border:1px solid #abefc6;border-radius:9px;padding:7px 8px;margin-top:2px}.parsed-bet-match strong{font-size:11px;color:#067647}.parsed-bet-match span{font-size:10px;color:#027a48}
+
+/* 2.5.4 screenshot parser hardening: compact rows + strict two-team matching */

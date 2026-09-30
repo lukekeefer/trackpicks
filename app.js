@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.3';
+const BUILD_VERSION = '2.5.4';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1367,6 +1367,31 @@ function ensureScreenshotOcr(){
   return screenshotOcrLoader;
 }
 
+function prepareScreenshotForOcr(dataUrl){
+  return new Promise((resolve)=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const ratio=img.width/Math.max(1,img.height);
+        const compact=img.height<240||ratio>4.25;
+        if(!compact){resolve({source:dataUrl,layoutHint:'card'});return;}
+        const targetHeight=Math.max(320,img.height*4);
+        const scale=Math.min(6,Math.max(3,targetHeight/Math.max(1,img.height)));
+        const canvas=document.createElement('canvas');
+        canvas.width=Math.round(img.width*scale);
+        canvas.height=Math.round(img.height*scale);
+        const ctx=canvas.getContext('2d',{alpha:false});
+        ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.imageSmoothingEnabled=false;
+        ctx.drawImage(img,0,0,canvas.width,canvas.height);
+        resolve({source:canvas.toDataURL('image/png'),layoutHint:'compact'});
+      }catch(_e){resolve({source:dataUrl,layoutHint:'card'});}
+    };
+    img.onerror=()=>resolve({source:dataUrl,layoutHint:'card'});
+    img.src=dataUrl;
+  });
+}
+
 function normalizeOcrBetText(text){
   let t=String(text||'')
     .replace(/[−–—]/g,'-')
@@ -1399,7 +1424,8 @@ function parseMoneyToken(value){
 
 function cleanSelectionName(value){
   return String(value||'')
-    .replace(/^[•·\-]+\s*/,'')
+    .replace(/^[^A-Za-z0-9]+\s*/,'')
+    .replace(/^(?:so|go|at|vs)\s+(?=[A-Z])/i,'')
     .replace(/\s+(SPREAD|TOTAL|MONEYLINE|ML)$/i,'')
     .replace(/\s+/g,' ')
     .trim();
@@ -1420,23 +1446,30 @@ function inferCandidateType(selection, nearby){
   return 'Spread';
 }
 
-function findCandidateStake(lines,start,end){
+function findCandidateStake(lines,start,end,layoutHint='card'){
   const stop=Math.min(lines.length,end??start+14);
   for(let i=start;i<stop;i++){
     if(/\bWager\b/i.test(lines[i])){
       const same=parseMoneyToken(lines[i]);
-      if(same!=null)return {value:same,confidence:'high'};
+      if(same!=null)return {value:same,confidence:'high',possibleWinnings:null};
       for(let j=i+1;j<Math.min(stop,i+4);j++){
         const n=parseMoneyToken(lines[j]);
-        if(n!=null)return {value:n,confidence:'high'};
+        if(n!=null)return {value:n,confidence:'high',possibleWinnings:null};
       }
     }
   }
+  const monies=[];
   for(let i=start;i<stop;i++){
-    const n=parseMoneyToken(lines[i]);
-    if(n!=null)return {value:n,confidence:'medium'};
+    const matches=[...String(lines[i]||'').matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g)];
+    for(const m of matches){
+      const n=Number(m[1].replace(/,/g,''));
+      if(Number.isFinite(n))monies.push(n);
+    }
   }
-  return {value:null,confidence:'missing'};
+  if(monies.length){
+    return {value:monies[0],confidence:layoutHint==='compact'?'high':'medium',possibleWinnings:layoutHint==='compact'&&monies.length>1?monies[1]:null};
+  }
+  return {value:null,confidence:'missing',possibleWinnings:null};
 }
 
 function findNearbyMeta(lines,start,end){
@@ -1456,7 +1489,7 @@ function findNearbyMeta(lines,start,end){
   return {sourceBetId,placedAt,status,eventText};
 }
 
-function parseScreenshotCandidates(rawText,standardUnitSize){
+function parseScreenshotCandidates(rawText,standardUnitSize,layoutHint='card'){
   const text=normalizeOcrBetText(rawText);
   const lines=text.split('\n');
   const sportsbook=detectScreenshotSportsbook(text);
@@ -1497,15 +1530,19 @@ function parseScreenshotCandidates(rawText,standardUnitSize){
     const next=starts[idx+1]?.index??Math.min(lines.length,base.index+18);
     const nearby=lines.slice(base.index,Math.min(lines.length,next)).join('\n');
     const type=inferCandidateType(base.selection,`${base.typeHint}\n${nearby}`);
-    const stake=findCandidateStake(lines,base.index,next);
+    const before=lines.slice(Math.max(0,base.index-3),base.index).join(' ');
+    const nearbyLines=lines.slice(base.index,Math.min(lines.length,next));
+    const compactRow=layoutHint==='compact'||(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s*\d{4}/i.test(before)&&!nearbyLines.some(x=>/\bWager\b/i.test(x)));
+    const stake=findCandidateStake(lines,base.index,next,compactRow?'compact':'card');
     const meta=findNearbyMeta(lines,base.index,next);
+    const contextText=lines.slice(Math.max(0,base.index-2),Math.min(lines.length,next)).join('\n');
     const units=(stake.value!=null&&Number(standardUnitSize)>0)?Math.round((stake.value/Number(standardUnitSize))*100)/100:null;
     let selection=base.selection;
     if(type==='Total')selection=selection.replace(/\s+[+-]?\d+(?:\.\d+)?$/,'').trim();
     return {
       id:crypto.randomUUID(),sportsbook,selection,betType:type,line:base.line,odds:base.odds,
-      stakeUsd:stake.value,units,stakeConfidence:stake.confidence,status:meta.status,eventText:meta.eventText,
-      placedAt:meta.placedAt,sourceBetId:meta.sourceBetId,reviewState:'Needs game match'
+      stakeUsd:stake.value,possibleWinningsUsd:stake.possibleWinnings,units,stakeConfidence:stake.confidence,status:meta.status,eventText:meta.eventText,
+      contextText,layoutType:compactRow?'compact':'card',placedAt:meta.placedAt,sourceBetId:meta.sourceBetId,reviewState:'Needs game match'
     };
   });
 }
@@ -1549,30 +1586,51 @@ function importTeamTextScore(text,teamName){
   return best;
 }
 
+function extractImportTeamClues(text){
+  const clues=[];
+  const seen=new Set();
+  const teamNames=[...new Set(state.games.flatMap(g=>[g.away,g.home]).filter(Boolean))];
+  for(const team of teamNames){
+    const score=importTeamTextScore(text,team);
+    if(score>=88){
+      const canonical=resolveEspnTeamName(team)||team;
+      const key=normalizeTeamName(canonical);
+      if(!seen.has(key)){seen.add(key);clues.push({team:canonical,score});}
+    }
+  }
+  return clues.sort((a,b)=>b.score-a.score);
+}
+
 function scoreImportCandidateForGame(candidate,game){
   if(!candidate||!game)return {score:0,selectionTeam:null};
   const selection=String(candidate.selection||'');
   const event=String(candidate.eventText||'');
+  const context=String(candidate.contextText||event||'');
   const selAway=importTeamTextScore(selection,game.away);
   const selHome=importTeamTextScore(selection,game.home);
   const eventAway=importTeamTextScore(event,game.away);
   const eventHome=importTeamTextScore(event,game.home);
+  const ctxAway=importTeamTextScore(context,game.away);
+  const ctxHome=importTeamTextScore(context,game.home);
+  const clues=extractImportTeamClues(context);
+  const clueKeys=new Set(clues.map(x=>normalizeTeamName(x.team)));
+  const awayKey=normalizeTeamName(resolveEspnTeamName(game.away)||game.away);
+  const homeKey=normalizeTeamName(resolveEspnTeamName(game.home)||game.home);
+  const hasTwoTeamContext=clueKeys.has(awayKey)&&clueKeys.has(homeKey);
   let score=0,selectionTeam=null;
   if(candidate.betType==='Total'){
-    if(eventAway>=78&&eventHome>=78)score=190+Math.min(eventAway,eventHome);
-    else if(Math.max(eventAway,eventHome)>=88)score=95+Math.max(eventAway,eventHome);
+    if(hasTwoTeamContext)score=280+Math.min(ctxAway,ctxHome);
+    else if(eventAway>=78&&eventHome>=78)score=250+Math.min(eventAway,eventHome);
+    else return {score:0,selectionTeam:null};
   }else{
     const selected=Math.max(selAway,selHome);
-    if(selected>=78){
-      selectionTeam=selAway>=selHome?game.away:game.home;
-      score=selected*2;
-      const opp=selectionTeam===game.away?eventHome:eventAway;
-      const same=selectionTeam===game.away?eventAway:eventHome;
-      if(opp>=78)score+=70;
-      if(same>=78)score+=30;
-    }else if(eventAway>=78&&eventHome>=78){
-      score=120+Math.min(eventAway,eventHome);
-    }
+    if(selected<78)return {score:0,selectionTeam:null};
+    selectionTeam=selAway>=selHome?game.away:game.home;
+    // Never auto-match a side from the selected team alone. We need opponent/event context too.
+    if(!hasTwoTeamContext && !(eventAway>=78&&eventHome>=78))return {score:0,selectionTeam};
+    score=selected*2+160;
+    if(hasTwoTeamContext)score+=Math.min(ctxAway,ctxHome);
+    if(eventAway>=78&&eventHome>=78)score+=80;
   }
   return {score,selectionTeam};
 }
@@ -1639,9 +1697,11 @@ async function processScreenshotBatch(){
     for(const item of targets){
       item.status='Parsing';item.progress=0;item.error='';render();
       try{
-        const result=await worker.recognize(item.preview);
+        const prepared=await prepareScreenshotForOcr(item.preview);
+        item.layoutHint=prepared.layoutHint;
+        const result=await worker.recognize(prepared.source);
         item.ocrText=normalizeOcrBetText(result?.data?.text||'');
-        item.candidates=matchScreenshotCandidatesToImportWeek(parseScreenshotCandidates(item.ocrText,state.standardUnitSize));
+        item.candidates=matchScreenshotCandidatesToImportWeek(parseScreenshotCandidates(item.ocrText,state.standardUnitSize,prepared.layoutHint));
         item.status=item.candidates.length?`${item.candidates.length} bet${item.candidates.length===1?'':'s'} found`:'Needs review';
         item.progress=100;
         if(!item.candidates.length)item.error='No wager was confidently detected. Keep this screenshot in the batch for manual review.';
@@ -2316,7 +2376,8 @@ function renderScreenshotImporter(){
         <div class="parsed-bet-head"><span>Bet ${cIndex+1}</span><span class="import-status-chip ${matchClass}">${escapeAttr(c.reviewState||'Needs review')}</span></div>
         <strong class="parsed-bet-pick">${escapeAttr(c.selection)}${escapeAttr(linePart)}</strong>
         <div class="parsed-bet-meta">${escapeAttr(meta)}${escapeAttr(oddsPart)}</div>
-        <div class="parsed-bet-stake">${escapeAttr(stake)}</div>
+        <div class="parsed-bet-stake">${escapeAttr(stake)}${c.possibleWinningsUsd!=null?`<span> · Possible winnings ${escapeAttr(formatUsd(c.possibleWinningsUsd))}</span>`:''}</div>
+        ${c.layoutType==='compact'?'<div class="parsed-bet-event">Compact row detected</div>':''}
         ${matchLine}
         ${c.eventText?`<div class="parsed-bet-event">${escapeAttr(c.eventText)}</div>`:''}
         ${c.stakeConfidence==='medium'?'<div class="parsed-bet-warning">Check wager amount — inferred from screenshot layout.</div>':''}
@@ -2336,7 +2397,7 @@ function renderScreenshotImporter(){
       ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
       ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
       <div class="screenshot-import-actions">${files.length?`<button type="button" class="primary" data-process-screenshots ${state.screenshotImportProcessing?'disabled':''}>${state.screenshotImportProcessing?'Processing Screenshots…':(totalCandidates?'Process Remaining Screenshots':'Process Screenshots')}</button>`:''}<button type="button" class="${files.length?'secondary':'primary'}" data-add-screenshots ${state.screenshotImportProcessing?'disabled':''}>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch '+(state.screenshotImportProcessing?'disabled':'')+'>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
-      <div class="screenshot-import-stage-head"><div><span>Stage 3</span><strong>Parse + match Week ${importWeek}</strong></div><p>TrackPicks parses each screenshot and only matches candidates against Week ${importWeek}. Bets from another week are blocked from this batch.</p></div>
+      <div class="screenshot-import-stage-head"><div><span>Stage 4</span><strong>Parse + validate Week ${importWeek}</strong></div><p>TrackPicks auto-detects card vs compact-row layouts, parses every wager it can find, and only auto-matches when both teams agree with a Week ${importWeek} game.</p></div>
       <div class="screenshot-review-list">${cards}</div>
     </div>
   </section></div>`;
