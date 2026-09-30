@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.3.1.3';
+const BUILD_VERSION = '2.3.1.4';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1651,7 +1651,7 @@ function renderTeamScreen(){
     return `<div class="team-schedule-row ${g.game_completed?'completed':'upcoming'}">
       <div class="team-game-identity">
         <div class="team-week-date"><strong>W${g.week}</strong><span>${escapeAttr(dateLabel)}</span></div>
-        <div class="team-opponent">${oppLogo}<div><strong>${isAway?'@ ':''}${escapeAttr(opponentAbbr)}</strong><span>${isAway?'Away':'Home'}</span></div></div>
+        <div class="team-opponent">${oppLogo}<div><strong>${isAway?'@ ':'vs '}${escapeAttr(opponent)}</strong></div></div>
         ${!g.game_completed?`<div class="team-upcoming-time">${escapeAttr(kickoff||'TBD')}</div>`:''}
       </div>
       ${g.game_completed?`<div class="team-game-metrics">
