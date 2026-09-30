@@ -1565,4 +1565,150 @@ html,body{min-height:100%;min-height:100dvh}
 .chart-tooltip-time{fill:#d1d5db;font-size:11px;font-weight:700}
 .chart-tooltip-line{fill:#fff;font-size:13px;font-weight:900}
 @media(max-width:420px){.movement-overview{grid-template-columns:1fr}.movement-current{font-size:19px}}
-\n\n/* TrackPicks 2.4.3 — Settings full-page destination */\n.settings-page-overlay{position:fixed;inset:0;z-index:95;background:#fff;display:block;overflow:hidden}\n.settings-page-sheet{width:100%;height:100vh;height:100dvh;max-width:760px;margin:0 auto;background:#fff;display:flex;flex-direction:column;overflow:hidden}\n.settings-page-top{flex:0 0 auto;display:grid;grid-template-columns:44px 1fr 44px;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.98);z-index:2}\n.settings-back-btn{width:40px;height:40px;border:0;background:#f3f4f6;border-radius:14px;font-size:32px;line-height:1;color:#111827;cursor:pointer}\n.settings-page-title{text-align:center;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}\n.settings-page-top-spacer{display:block}\n.settings-page-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding:16px 16px calc(28px + env(safe-area-inset-bottom,0px))}\n.settings-page-account{margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.4;overflow-wrap:anywhere}\n@media(max-width:520px){.settings-page-scroll{padding-left:14px;padding-right:14px}}\n
+
+
+/* TrackPicks 2.4.4 — compact line movement + repaired full-page Settings */
+.movement-overview{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:0;
+  margin-top:2px;
+}
+.movement-market-block{
+  min-width:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  padding:4px 14px 5px 0;
+}
+.movement-market-block + .movement-market-block{
+  border-left:1px solid var(--line);
+  padding-left:16px;
+  padding-right:0;
+}
+.movement-market-label{
+  display:block;
+  margin:0 0 3px;
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.1;
+  text-transform:uppercase;
+  letter-spacing:.07em;
+  font-weight:900;
+}
+.movement-current{
+  display:block;
+  margin:0;
+  color:var(--text);
+  font-size:20px;
+  line-height:1.12;
+  font-weight:900;
+  white-space:normal;
+}
+.movement-opened{
+  display:block;
+  margin:5px 0 0;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.25;
+}
+.movement-net{
+  display:block;
+  margin:3px 0 0;
+  color:#374151;
+  font-size:12px;
+  line-height:1.2;
+  font-weight:850;
+}
+.movement-opener-note{
+  margin-top:8px;
+  color:var(--muted);
+  font-size:9px;
+  line-height:1.3;
+}
+.history-buttons{
+  gap:8px;
+  margin-top:10px;
+}
+.history-btn{
+  min-height:44px;
+  padding-top:9px;
+  padding-bottom:9px;
+}
+@media(max-width:420px){
+  .movement-overview{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .movement-market-block{padding-right:10px}
+  .movement-market-block + .movement-market-block{padding-left:12px}
+  .movement-current{font-size:17px}
+  .movement-opened{font-size:10px}
+  .movement-net{font-size:11px}
+}
+
+.settings-page-overlay{
+  position:fixed;
+  inset:0;
+  z-index:130;
+  background:#fff;
+  display:block;
+  overflow:hidden;
+}
+.settings-page-sheet{
+  width:100%;
+  height:100vh;
+  height:100dvh;
+  max-width:760px;
+  margin:0 auto;
+  background:#fff;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.settings-page-top{
+  flex:0 0 auto;
+  display:grid;
+  grid-template-columns:44px 1fr 44px;
+  align-items:center;
+  gap:8px;
+  padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;
+  border-bottom:1px solid var(--line);
+  background:rgba(255,255,255,.98);
+  z-index:2;
+}
+.settings-back-btn{
+  width:40px;
+  height:40px;
+  border:0;
+  background:#f3f4f6;
+  border-radius:14px;
+  font-size:32px;
+  line-height:1;
+  color:#111827;
+  cursor:pointer;
+}
+.settings-page-title{
+  text-align:center;
+  font-size:13px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:var(--muted);
+}
+.settings-page-top-spacer{display:block}
+.settings-page-scroll{
+  flex:1 1 auto;
+  min-height:0;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:contain;
+  padding:16px 16px calc(28px + env(safe-area-inset-bottom,0px));
+}
+.settings-page-account{
+  margin:0 0 14px;
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.4;
+  overflow-wrap:anywhere;
+}
+@media(max-width:520px){
+  .settings-page-scroll{padding-left:14px;padding-right:14px}
+}

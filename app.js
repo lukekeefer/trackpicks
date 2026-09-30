@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.4.3';
+const BUILD_VERSION = '2.4.4';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1161,8 +1161,10 @@ function renderMovementOverview(g){
   const currentSpread=g.spread==null?null:Number(g.spread);
   const firstFromCurrentTeam=currentSpreadTeam?spreadForTeamFromSnapshot(first,currentSpreadTeam):null;
   const spreadDelta=firstFromCurrentTeam!=null&&currentSpread!=null?Number((currentSpread-firstFromCurrentTeam).toFixed(1)):null;
-  const currentSpreadLabel=currentSpreadTeam&&currentSpread!=null?`${currentSpreadTeam} ${signed(currentSpread)}`:'—';
-  const openingSpreadLabel=first.spreadTeam&&first.spread!=null?`${first.spreadTeam} ${signed(Number(first.spread))}`:'—';
+  const currentSpreadSchool=currentSpreadTeam?splitSlateTeamName(currentSpreadTeam).school:'';
+  const openingSpreadSchool=first.spreadTeam?splitSlateTeamName(first.spreadTeam).school:'';
+  const currentSpreadLabel=currentSpreadSchool&&currentSpread!=null?`${currentSpreadSchool} ${signed(currentSpread)}`:'—';
+  const openingSpreadLabel=openingSpreadSchool&&first.spread!=null?`${openingSpreadSchool} ${signed(Number(first.spread))}`:'—';
   let spreadMove='No net move';
   if(spreadDelta!=null&&Math.abs(spreadDelta)>=0.001){
     spreadMove=spreadDelta<0?`${Math.abs(spreadDelta)} pts toward ${currentSpreadTeam}`:`${Math.abs(spreadDelta)} pts away from ${currentSpreadTeam}`;
@@ -1398,7 +1400,7 @@ function appHeader(leftHtml=''){
       <div class="app-header-left">${leftHtml||'<span class="app-header-left-spacer" aria-hidden="true"></span>'}</div>
       <div class="app-header-brand"><img src="trackpicks-wordmark.png" class="app-header-wordmark" alt="TrackPicks"></div>
       <div class="app-header-right">
-        <button class="app-settings-btn" data-settings aria-label="Settings">
+        <button type="button" class="app-settings-btn" data-settings aria-label="Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9.8 2h4.4l.6 2.4c.5.2 1 .4 1.5.7l2.2-1.2 3.1 3.1-1.2 2.2c.3.5.5 1 .7 1.5l2.4.6v4.4l-2.4.6c-.2.5-.4 1-.7 1.5l1.2 2.2-3.1 3.1-2.2-1.2c-.5.3-1 .5-1.5.7l-.6 2.4H9.8l-.6-2.4c-.5-.2-1-.4-1.5-.7l-2.2 1.2-3.1-3.1 1.2-2.2c-.3-.5-.5-1-.7-1.5l-2.4-.6v-4.4l2.4-.6c.2-.5.4-1 .7-1.5L2.4 7l3.1-3.1 2.2 1.2c.5-.3 1-.5 1.5-.7L9.8 2Z"/>
             <circle cx="12" cy="13.5" r="3.2"/>
@@ -1951,7 +1953,7 @@ function renderSettingsSheet(){
   return `<div class="settings-page-overlay">
     <section class="settings-page-sheet">
       <div class="settings-page-top">
-        <button class="settings-back-btn" data-close-settings aria-label="Back">‹</button>
+        <button type="button" class="settings-back-btn" data-close-settings aria-label="Back">‹</button>
         <div class="settings-page-title">Settings</div>
         <span class="settings-page-top-spacer"></span>
       </div>
