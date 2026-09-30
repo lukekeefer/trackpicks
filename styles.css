@@ -1547,3 +1547,21 @@ html,body{min-height:100%;min-height:100dvh}
   .game-team-record small{font-size:7px}
   .game-team-record b{font-size:13px}
 }
+
+/* 2.4.2 line movement + graph interaction */
+.picker-overlay{z-index:120}
+.movement-overview{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.movement-market-block{border:1px solid var(--line);border-radius:12px;background:#f9fafb;padding:12px;min-width:0}
+.movement-market-label{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:900}
+.movement-current{display:block;margin-top:5px;font-size:18px;line-height:1.2}
+.movement-opened,.movement-net{display:block;margin-top:5px;font-size:12px;line-height:1.35}
+.movement-opened{color:var(--muted)}
+.movement-net{font-weight:800;color:#374151}
+.movement-opener-note{margin-top:8px;color:var(--muted);font-size:10px}
+.chart-dot{cursor:pointer;transition:r .12s ease,fill .12s ease}
+.chart-dot.selected{fill:#111827}
+.chart-tooltip{pointer-events:none}
+.chart-tooltip rect{fill:#111827;stroke:#111827;stroke-width:1;filter:drop-shadow(0 4px 10px rgba(17,24,39,.18))}
+.chart-tooltip-time{fill:#d1d5db;font-size:11px;font-weight:700}
+.chart-tooltip-line{fill:#fff;font-size:13px;font-weight:900}
+@media(max-width:420px){.movement-overview{grid-template-columns:1fr}.movement-current{font-size:19px}}

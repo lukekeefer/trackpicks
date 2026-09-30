@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.4.0.1';
+const BUILD_VERSION = '2.4.2';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -150,6 +150,7 @@ const state = {
   gradingReviews: {straight:{},parlays:{}},
   pickerOptions: ['Keef','Wilson','Both','Tail'],
   historyChartKind: null,
+  historyPointIndex: null,
   activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
   gameTeamStats: {}, gameTeamStatsLoading: false
 };
@@ -1152,10 +1153,39 @@ function compactOddsHistory(g){
   if(!compact.length||compact[compact.length-1].key!==currentKey) compact.push({capturedAt:g.marketUpdatedAt||new Date().toISOString(),homeSpread:currentHome,total:g.total,key:currentKey});
   return compact;
 }
-function renderMovementHistory(g){
-  const rows=compactOddsHistory(g);
-  if(rows.length<2)return '<div class="movement-empty">No line movement captured yet.</div>';
-  return `<div class="movement-history">${rows.slice(-6).map((h,i,arr)=>{const when=formatKickoff(h.capturedAt);const label=rows.length>6&&i===0?'Earlier':(i===arr.length-1?'Current':`${when.date} · ${when.time}`);const spread=h.homeSpread==null?'—':`${g.home} ${signed(h.homeSpread)}`;const total=h.total==null?'—':`O/U ${h.total}`;return `<div class="movement-row"><span>${label}</span><strong>${spread}</strong><strong>${total}</strong></div>`;}).join('')}</div>`;
+function renderMovementOverview(g){
+  const rows=oddsHistoryForGame(g);
+  if(!rows.length)return '<div class="movement-empty">No line movement captured yet.</div>';
+  const first=rows[0];
+  const currentSpreadTeam=g.spreadTeam||first.spreadTeam||g.home;
+  const currentSpread=g.spread==null?null:Number(g.spread);
+  const firstFromCurrentTeam=currentSpreadTeam?spreadForTeamFromSnapshot(first,currentSpreadTeam):null;
+  const spreadDelta=firstFromCurrentTeam!=null&&currentSpread!=null?Number((currentSpread-firstFromCurrentTeam).toFixed(1)):null;
+  const currentSpreadLabel=currentSpreadTeam&&currentSpread!=null?`${currentSpreadTeam} ${signed(currentSpread)}`:'—';
+  const openingSpreadLabel=first.spreadTeam&&first.spread!=null?`${first.spreadTeam} ${signed(Number(first.spread))}`:'—';
+  let spreadMove='No net move';
+  if(spreadDelta!=null&&Math.abs(spreadDelta)>=0.001){
+    spreadMove=spreadDelta<0?`${Math.abs(spreadDelta)} pts toward ${currentSpreadTeam}`:`${Math.abs(spreadDelta)} pts away from ${currentSpreadTeam}`;
+  }
+  const currentTotal=g.total==null?null:Number(g.total);
+  const openingTotal=first.total==null?null:Number(first.total);
+  const totalDelta=currentTotal!=null&&openingTotal!=null?Number((currentTotal-openingTotal).toFixed(1)):null;
+  let totalMove='No net move';
+  if(totalDelta!=null&&Math.abs(totalDelta)>=0.001) totalMove=`${totalDelta>0?'↑':'↓'} ${Math.abs(totalDelta)} pt${Math.abs(totalDelta)===1?'':'s'}`;
+  return `<div class="movement-overview">
+    <div class="movement-market-block">
+      <span class="movement-market-label">Spread</span>
+      <strong class="movement-current">${escapeAttr(currentSpreadLabel)}</strong>
+      <span class="movement-opened">Opened* ${escapeAttr(openingSpreadLabel)}</span>
+      <span class="movement-net">${escapeAttr(spreadMove)}</span>
+    </div>
+    <div class="movement-market-block">
+      <span class="movement-market-label">Total</span>
+      <strong class="movement-current">${currentTotal==null?'—':currentTotal}</strong>
+      <span class="movement-opened">Opened* ${openingTotal==null?'—':openingTotal}</span>
+      <span class="movement-net">${escapeAttr(totalMove)}</span>
+    </div>
+  </div><div class="movement-opener-note">*TrackPicks first captured DraftKings line.</div>`;
 }
 
 function historyChartPoints(g,kind){
@@ -1175,14 +1205,25 @@ function renderHistorySvg(points,kind,g){
   if(maxV===minV){minV-=STEP;maxV+=STEP;}else{minV-=STEP;maxV+=STEP;}
   minV=Number(minV.toFixed(1));maxV=Number(maxV.toFixed(1));
   const x=t=>L+((t-minT)/(maxT-minT))*(W-L-R), y=v=>T+(1-(v-minV)/(maxV-minV))*(H-T-B);
-  const coords=points.map((p,i)=>({x:x(times[i]),y:y(vals[i]),p}));
+  const coords=points.map((p,i)=>({x:x(times[i]),y:y(vals[i]),p,i}));
   const path=coords.map((c,i)=>`${i?'L':'M'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
   const ticks=[];for(let v=maxV;v>=minV-0.001;v-=STEP)ticks.push(Number(v.toFixed(1)));
   const grid=ticks.map(v=>{const yy=y(v);return `<line x1="${L}" y1="${yy.toFixed(1)}" x2="${W-R}" y2="${yy.toFixed(1)}" class="chart-grid-line"/><text x="${L-8}" y="${(yy+4).toFixed(1)}" text-anchor="end" class="chart-axis-text">${kind==='Spread'?signed(v):v}</text>`;}).join('');
-  const dots=coords.map(c=>{const when=formatKickoff(c.p.capturedAt);const label=kind==='Spread'?`${g.home} ${signed(c.p.value)}`:`O/U ${c.p.value}`;return `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="5" class="chart-dot"><title>${when.date} ${when.time} — ${label}</title></circle>`;}).join('');
+  const selectedIndex=Number.isInteger(state.historyPointIndex)?state.historyPointIndex:null;
+  const dots=coords.map(c=>`<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${selectedIndex===c.i?7:5}" class="chart-dot ${selectedIndex===c.i?'selected':''}" data-history-point="${c.i}" tabindex="0" role="button" aria-label="View snapshot details"></circle>`).join('');
+  let tooltip='';
+  if(selectedIndex!=null&&coords[selectedIndex]){
+    const c=coords[selectedIndex],when=formatKickoff(c.p.capturedAt);
+    const lineLabel=kind==='Spread'?`${g.home} ${signed(c.p.value)}`:`O/U ${c.p.value}`;
+    const boxW=214,boxH=58;
+    let boxX=Math.max(L,Math.min(W-R-boxW,c.x-boxW/2));
+    let boxY=c.y-boxH-14;if(boxY<T)boxY=c.y+14;
+    tooltip=`<g class="chart-tooltip" transform="translate(${boxX.toFixed(1)} ${boxY.toFixed(1)})"><rect width="${boxW}" height="${boxH}" rx="10"></rect><text x="12" y="22" class="chart-tooltip-time">${escapeAttr(`${when.date} · ${when.time}`)}</text><text x="12" y="43" class="chart-tooltip-line">${escapeAttr(lineLabel)}</text></g>`;
+  }
   const first=formatKickoff(points[0].capturedAt),last=formatKickoff(points[points.length-1].capturedAt);
-  return `<svg class="history-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${kind} line history">${grid}<path d="${path}" class="chart-line"/>${dots}<text x="${L}" y="${H-12}" class="chart-axis-text">${first.date} ${first.time}</text><text x="${W-R}" y="${H-12}" text-anchor="end" class="chart-axis-text">${last.date} ${last.time}</text></svg>`;
+  return `<svg class="history-chart" data-history-chart viewBox="0 0 ${W} ${H}" role="img" aria-label="${kind} line history">${grid}<path d="${path}" class="chart-line"/>${dots}${tooltip}<text x="${L}" y="${H-12}" class="chart-axis-text">${first.date} ${first.time}</text><text x="${W-R}" y="${H-12}" text-anchor="end" class="chart-axis-text">${last.date} ${last.time}</text></svg>`;
 }
+
 function renderHistoryChart(){
   const g=gameById(state.activeGameId);if(!g)return'';
   const kind=state.historyChartKind,points=historyChartPoints(g,kind);
@@ -1559,7 +1600,7 @@ function renderParlaysSlip(){
         <input id="parlayOddsInput" type="text" inputmode="numeric" value="${escapeAttr(d.odds)}" placeholder="${d.isTeaser?'+120':'Add 2+ priced legs'}">
       </div>
       <div class="field"><label>Units</label><input id="parlayUnitsInput" type="number" min="0.1" step="0.5" value="${escapeAttr(d.units)}"></div>
-      <div class="field full"><label>Who’s picks are these?</label><select id="parlayWhoInput">${names.map(n=>`<option value="${escapeAttr(n)}" ${(d.who||state.displayName)===n?'selected':''}>${escapeAttr(n)}</option>`).join('')}</select></div>
+      <div class="field full"><label>Who’s pick is this?</label><select id="parlayWhoInput">${names.map(n=>`<option value="${escapeAttr(n)}" ${(d.who||state.displayName)===n?'selected':''}>${escapeAttr(n)}</option>`).join('')}</select></div>
     </div>
     ${profit!=null?`<div class="parlay-payout"><span>To win</span><strong>${profit.toFixed(2)}u</strong><span>Total return ${(profit+Number(d.units)).toFixed(2)}u</span></div>`:''}
     <button class="primary ${state.parlaySaving?'saved-confirmation':''}" data-save-parlay ${state.parlaySaving?'disabled':''}>${state.parlaySaving?'Saving…':(d.id?'Save Parlay Changes':'Save Parlay')}</button>
@@ -1605,7 +1646,7 @@ function renderPickerSelector(){
       <div class="sheet-handle"></div>
       <div class="close-row">
         <div>
-          <h2 style="margin:0">Who’s picks are these?</h2>
+          <h2 style="margin:0">Who’s pick is this?</h2>
         </div>
         <button class="icon-btn" data-close-picker-selector>✕</button>
       </div>
@@ -1835,10 +1876,10 @@ function renderGameSheet(){
 
       <section class="movement-card">
         <div class="movement-title">Line movement</div>
-        ${renderMovementHistory(g)}
+        ${renderMovementOverview(g)}
         <div class="history-buttons">
-          <button type="button" class="secondary history-btn" data-open-history="Spread" ${historyChartPoints(g,'Spread').length<2?'disabled':''}>Spread History</button>
-          <button type="button" class="secondary history-btn" data-open-history="Total" ${historyChartPoints(g,'Total').length<2?'disabled':''}>Total History</button>
+          <button type="button" class="secondary history-btn" data-open-history="Spread" ${historyChartPoints(g,'Spread').length<2?'disabled':''}>Spread Graph</button>
+          <button type="button" class="secondary history-btn" data-open-history="Total" ${historyChartPoints(g,'Total').length<2?'disabled':''}>Total Graph</button>
         </div>
       </section>
 
@@ -1861,7 +1902,7 @@ function renderGameSheet(){
         </div>
         <div class="picker-caution-row">
           <div class="field picker-inline-field">
-            <label>Who’s picks are these?</label>
+            <label>Who’s pick is this?</label>
             <button type="button" class="picker-select-btn" data-open-picker-selector>
               <span id="pickerSelectionLabel">${escapeAttr(defaultWho)}</span>
               <span class="chev">›</span>
@@ -2101,9 +2142,11 @@ function bind(){
   document.querySelectorAll('[data-game],[data-open-game]').forEach(el=>el.onclick=()=>{state.activeGameId=el.dataset.game||el.dataset.openGame;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;render();const g=gameById(state.activeGameId);if(g)loadGameTeamStats(g);});
   document.querySelectorAll('[data-open-team]').forEach(el=>el.onclick=(event)=>{event.preventDefault();event.stopPropagation();openTeamScreen(el.dataset.openTeam);});
   document.querySelectorAll('[data-close-team]').forEach(el=>el.onclick=()=>{state.activeTeamId=null;state.activeTeamName='';state.teamScreenGames=[];state.teamScreenLoading=false;state.teamScreenError='';render();});
-  document.querySelectorAll('[data-close]').forEach(el=>el.onclick=()=>{state.activeGameId=null;state.editWagerId=null;state.historyChartKind=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
-  document.querySelectorAll('[data-open-history]').forEach(el=>el.onclick=(event)=>{event.preventDefault();captureWagerDraft();const scrollTop=captureGameSheetScroll();state.historyChartKind=el.dataset.openHistory;render();restoreGameSheetScroll(scrollTop);});
-  document.querySelectorAll('[data-close-history]').forEach(el=>el.onclick=(event)=>{event.preventDefault();const scrollTop=captureGameSheetScroll();state.historyChartKind=null;render();restoreGameSheetScroll(scrollTop);});
+  document.querySelectorAll('[data-close]').forEach(el=>el.onclick=()=>{state.activeGameId=null;state.editWagerId=null;state.historyChartKind=null;state.historyPointIndex=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
+  document.querySelectorAll('[data-open-history]').forEach(el=>el.onclick=(event)=>{event.preventDefault();captureWagerDraft();const scrollTop=captureGameSheetScroll();state.historyChartKind=el.dataset.openHistory;state.historyPointIndex=null;render();restoreGameSheetScroll(scrollTop);});
+  document.querySelectorAll('[data-close-history]').forEach(el=>el.onclick=(event)=>{event.preventDefault();const scrollTop=captureGameSheetScroll();state.historyChartKind=null;state.historyPointIndex=null;render();restoreGameSheetScroll(scrollTop);});
+  document.querySelectorAll('[data-history-point]').forEach(el=>el.onclick=(event)=>{event.preventDefault();event.stopPropagation();state.historyPointIndex=Number(el.dataset.historyPoint);const scrollTop=captureGameSheetScroll();render();restoreGameSheetScroll(scrollTop);});
+  document.querySelectorAll('[data-history-chart]').forEach(el=>el.onclick=(event)=>{if(event.target.closest?.('[data-history-point]'))return;if(state.historyPointIndex==null)return;state.historyPointIndex=null;const scrollTop=captureGameSheetScroll();render();restoreGameSheetScroll(scrollTop);});
   bindDynamicSelections();
   document.querySelectorAll('[data-save-wager]').forEach(el=>el.onclick=saveCurrentWager);
   document.querySelectorAll('[data-add-to-parlay]').forEach(el=>el.onclick=addCurrentSelectionToParlay);
