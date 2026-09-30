@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.3.1';
+const BUILD_VERSION = '2.3.1.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1615,7 +1615,7 @@ function renderTeamScreen(){
   const teamId=String(state.activeTeamId||'');
   const meta=state.cfbTeams.find(t=>String(t.espnTeamId)===teamId)||teamMetaFor(state.activeTeamName);
   const teamName=meta?.espnName||state.activeTeamName||'Team';
-  const display=teamDisplayParts(teamName);
+  const display=splitSlateTeamName(teamName);
   const logo=meta?.logoUrl
     ? `<img class="team-page-logo" src="${escapeAttr(meta.logoUrl)}" alt="${escapeAttr(teamName)} logo">`
     : `<div class="team-page-logo team-page-logo-fallback">${escapeAttr(meta?.abbreviation||teamMonogram(teamName))}</div>`;
@@ -1654,7 +1654,7 @@ function renderTeamScreen(){
     <section class="sheet team-page-sheet">
       <div class="sheet-handle"></div>
       <div class="team-page-top"><button class="team-back-btn" data-close-team aria-label="Back">‹</button><div class="team-page-title">2026 Team</div><span class="team-page-top-spacer"></span></div>
-      <section class="team-page-hero">${logo}<div class="team-page-name"><h2>${escapeAttr(display.school||teamName)}</h2><div>${escapeAttr(display.nickname||'')}</div><span>${escapeAttr(meta?.conference||'')}</span></div></section>
+      <section class="team-page-hero">${logo}<div class="team-page-name"><h2>${escapeAttr(display.school||teamName)}</h2><div>${escapeAttr(display.mascot||'')}</div><span>${escapeAttr(meta?.conference||'')}</span></div></section>
       <div class="team-record-grid"><div><strong>${overall}</strong><span>Overall</span></div><div><strong>${ats}</strong><span>ATS</span></div></div>
       <div class="team-schedule-heading"><strong>2026 Schedule</strong><span>Closing line · result · ATS</span></div>
       ${body}
