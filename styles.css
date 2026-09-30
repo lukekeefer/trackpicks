@@ -1303,7 +1303,7 @@ html,body{min-height:100%;min-height:100dvh}
   line-height:1;
 }
 
-/* TrackPicks V2.2.5.2 — consistent global app header */
+/* TrackPicks V2.2.5.3 — consistent global app header */
 .app-main-header{
   position:sticky;
   top:0;
@@ -1759,9 +1759,13 @@ html,body{min-height:100%;min-height:100dvh}
 @media(max-width:430px){.screenshot-import-launch{align-items:flex-start;flex-direction:column}.screenshot-import-btn{width:100%}.screenshot-review-card{grid-template-columns:78px 1fr}.screenshot-thumb-wrap{width:78px;height:104px}.screenshot-import-summary{align-items:flex-start}.unit-size-chip{flex:0 0 auto}}
 
 
-/* 2.5.2 screenshot parsing */
+/* 2.5.3 screenshot parsing */
 .screenshot-review-card.has-results{grid-template-columns:92px 1fr}.screenshot-review-card.has-results .parsed-bets-list{grid-column:1/-1}
 .import-status-chip.working{background:#eff6ff;color:#1d4ed8}.import-status-chip.review{background:#fff7ed;color:#9a3412}
 .import-progress{height:5px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:2px}.import-progress span{display:block;height:100%;background:#111827;border-radius:inherit;transition:width .2s ease}
 .parsed-bets-list{display:grid;gap:8px;margin-top:2px}.parsed-bet-card{border:1px solid var(--line);border-radius:12px;padding:10px;background:#f9fafb;display:grid;gap:4px}.parsed-bet-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.parsed-bet-head>span:first-child{font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:850;color:var(--muted)}.parsed-bet-pick{font-size:16px;line-height:1.2}.parsed-bet-meta,.parsed-bet-stake,.parsed-bet-event{font-size:11px;line-height:1.35;color:#475467}.parsed-bet-stake{font-weight:750;color:#111827}.parsed-bet-warning{font-size:10px;line-height:1.35;color:#9a3412;background:#fff7ed;border-radius:8px;padding:6px 7px;margin-top:2px}
 @media(max-width:430px){.screenshot-review-card.has-results{grid-template-columns:78px 1fr}}
+
+/* 2.5.3 screenshot game matching */
+.import-status-chip.matched{background:#ecfdf3;color:#067647}.import-status-chip.wrong-week{background:#fef3f2;color:#b42318}
+.parsed-bet-match{display:grid;gap:2px;background:#ecfdf3;border:1px solid #abefc6;border-radius:9px;padding:7px 8px;margin-top:2px}.parsed-bet-match strong{font-size:11px;color:#067647}.parsed-bet-match span{font-size:10px;color:#027a48}

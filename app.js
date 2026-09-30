@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.2';
+const BUILD_VERSION = '2.5.3';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -154,7 +154,7 @@ const state = {
   activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
   gameTeamStats: {}, gameTeamStatsLoading: false,
   standardUnitSize: null,
-  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false
+  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -1330,6 +1330,12 @@ function fileToDataUrl(file){
 async function queueScreenshotFiles(fileList){
   const incoming=[...(fileList||[])].filter(f=>f&&/^image\//i.test(f.type));
   if(!incoming.length){state.screenshotImportMessage='Choose one or more image screenshots.';render();return;}
+  if(!state.screenshotImportFiles.length) state.screenshotImportWeek=Number(state.selectedWeek);
+  const importWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
+  if(Number(state.selectedWeek)!==importWeek){
+    state.screenshotImportMessage=`This import batch is locked to Week ${importWeek}. Clear the batch before importing into another week.`;
+    render();return;
+  }
   const created=[];
   for(const file of incoming){
     try{
@@ -1504,6 +1510,115 @@ function parseScreenshotCandidates(rawText,standardUnitSize){
   });
 }
 
+
+function normalizeImportTeamText(value){
+  return String(value||'')
+    .toLowerCase()
+    .replace(/&/g,' and ')
+    .replace(/[^a-z0-9]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function importTeamForms(teamName){
+  const forms=new Set();
+  const add=value=>{const n=normalizeImportTeamText(value);if(n.length>=2)forms.add(n);};
+  add(teamName);
+  const espnName=resolveEspnTeamName(teamName)||teamName;
+  add(espnName);
+  const meta=state.cfbTeams.find(t=>normalizeTeamName(t.espnName)===normalizeTeamName(espnName));
+  if(meta){add(meta.espnName);add(meta.abbreviation);add(meta.shortDisplayName);add(meta.shortNickname);}
+  for(const alias of state.cfbAliases){
+    if(normalizeTeamName(alias.espnName)===normalizeTeamName(espnName))add(alias.alias);
+  }
+  return [...forms].sort((a,b)=>b.length-a.length);
+}
+
+function importTeamTextScore(text,teamName){
+  const t=normalizeImportTeamText(text);
+  if(!t)return 0;
+  let best=0;
+  for(const form of importTeamForms(teamName)){
+    if(!form)continue;
+    if(t===form)best=Math.max(best,100);
+    else if(t.endsWith(' '+form) && t.length-form.length<=4)best=Math.max(best,96); // OCR prefix artifact
+    else if(t.startsWith(form+' ') && t.length-form.length<=12)best=Math.max(best,91);
+    else if((` ${t} `).includes(` ${form} `))best=Math.max(best,88);
+    else if(form.length>=4 && (` ${form} `).includes(` ${t} `))best=Math.max(best,78);
+  }
+  return best;
+}
+
+function scoreImportCandidateForGame(candidate,game){
+  if(!candidate||!game)return {score:0,selectionTeam:null};
+  const selection=String(candidate.selection||'');
+  const event=String(candidate.eventText||'');
+  const selAway=importTeamTextScore(selection,game.away);
+  const selHome=importTeamTextScore(selection,game.home);
+  const eventAway=importTeamTextScore(event,game.away);
+  const eventHome=importTeamTextScore(event,game.home);
+  let score=0,selectionTeam=null;
+  if(candidate.betType==='Total'){
+    if(eventAway>=78&&eventHome>=78)score=190+Math.min(eventAway,eventHome);
+    else if(Math.max(eventAway,eventHome)>=88)score=95+Math.max(eventAway,eventHome);
+  }else{
+    const selected=Math.max(selAway,selHome);
+    if(selected>=78){
+      selectionTeam=selAway>=selHome?game.away:game.home;
+      score=selected*2;
+      const opp=selectionTeam===game.away?eventHome:eventAway;
+      const same=selectionTeam===game.away?eventAway:eventHome;
+      if(opp>=78)score+=70;
+      if(same>=78)score+=30;
+    }else if(eventAway>=78&&eventHome>=78){
+      score=120+Math.min(eventAway,eventHome);
+    }
+  }
+  return {score,selectionTeam};
+}
+
+function bestImportGameMatch(candidate,games){
+  const ranked=(games||[]).map(game=>({game,...scoreImportCandidateForGame(candidate,game)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);
+  if(!ranked.length)return null;
+  const best=ranked[0],second=ranked[1];
+  const confident=best.score>=156 && (!second || best.score-second.score>=18 || best.score>=250);
+  return confident?best:null;
+}
+
+function matchScreenshotCandidateToWeek(candidate,week){
+  const activeWeek=Number(week);
+  const inWeek=bestImportGameMatch(candidate,weekGames(activeWeek));
+  if(inWeek){
+    candidate.matchedGameId=inWeek.game.id;
+    candidate.matchedWeek=activeWeek;
+    candidate.matchedAway=inWeek.game.away;
+    candidate.matchedHome=inWeek.game.home;
+    candidate.matchedSelection=inWeek.selectionTeam||candidate.selection;
+    candidate.reviewState=`Matched Week ${activeWeek}`;
+    candidate.matchStatus='matched';
+    return candidate;
+  }
+  const outside=bestImportGameMatch(candidate,state.games.filter(g=>Number(g.week)!==activeWeek));
+  candidate.matchedGameId=null;
+  candidate.matchedWeek=null;
+  candidate.matchedAway='';candidate.matchedHome='';candidate.matchedSelection='';
+  if(outside){
+    candidate.detectedWeek=Number(outside.game.week);
+    candidate.reviewState=`Not in Week ${activeWeek}`;
+    candidate.matchStatus='wrong-week';
+  }else{
+    candidate.detectedWeek=null;
+    candidate.reviewState='Needs game match';
+    candidate.matchStatus='unmatched';
+  }
+  return candidate;
+}
+
+function matchScreenshotCandidatesToImportWeek(candidates){
+  const week=Number(state.screenshotImportWeek ?? state.selectedWeek);
+  return (candidates||[]).map(c=>matchScreenshotCandidateToWeek(c,week));
+}
+
 async function processScreenshotBatch(){
   if(state.screenshotImportProcessing)return;
   const targets=state.screenshotImportFiles.filter(x=>x.preview&&(!x.candidates||!x.candidates.length)&&x.status!=='Parsing');
@@ -1526,7 +1641,7 @@ async function processScreenshotBatch(){
       try{
         const result=await worker.recognize(item.preview);
         item.ocrText=normalizeOcrBetText(result?.data?.text||'');
-        item.candidates=parseScreenshotCandidates(item.ocrText,state.standardUnitSize);
+        item.candidates=matchScreenshotCandidatesToImportWeek(parseScreenshotCandidates(item.ocrText,state.standardUnitSize));
         item.status=item.candidates.length?`${item.candidates.length} bet${item.candidates.length===1?'':'s'} found`:'Needs review';
         item.progress=100;
         if(!item.candidates.length)item.error='No wager was confidently detected. Keep this screenshot in the batch for manual review.';
@@ -1669,7 +1784,7 @@ function topbar(){
   if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
   return appHeader();
 }
-function bottomNav(){ if(state.view==='weeks'||state.activeGameId||state.activeTeamId||state.showSettings)return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
+function bottomNav(){ if(state.view==='weeks'||state.activeGameId||state.activeTeamId||state.showSettings||state.showScreenshotImporter)return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
 function renderMarket(){
@@ -2188,17 +2303,21 @@ function renderScreenshotImporter(){
   const files=state.screenshotImportFiles;
   const unitSet=Number.isFinite(Number(state.standardUnitSize))&&Number(state.standardUnitSize)>0;
   const totalCandidates=files.reduce((sum,item)=>sum+(item.candidates?.length||0),0);
+  const importWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
   const cards=files.length?files.map((item,index)=>{
     const candidates=(item.candidates||[]).map((c,cIndex)=>{
       const stake=c.stakeUsd==null?'Stake not detected':`${formatUsd(c.stakeUsd)}${c.units!=null?` → ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u`:''}`;
       const linePart=c.line==null?'':` ${signed(c.line)}`;
       const oddsPart=c.odds==null?'':` · ${signed(c.odds)}`;
       const meta=[c.sportsbook,c.betType,c.status].filter(Boolean).join(' · ');
+      const matchClass=c.matchStatus==='matched'?'matched':c.matchStatus==='wrong-week'?'wrong-week':'review';
+      const matchLine=c.matchStatus==='matched'?`<div class="parsed-bet-match"><strong>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</strong><span>Week ${importWeek} game matched</span></div>`:c.matchStatus==='wrong-week'?`<div class="parsed-bet-warning"><strong>Wrong week.</strong> This appears to be a Week ${Number(c.detectedWeek)} game. This batch can only accept Week ${importWeek} games.</div>`:'';
       return `<div class="parsed-bet-card">
-        <div class="parsed-bet-head"><span>Bet ${cIndex+1}</span><span class="import-status-chip review">${escapeAttr(c.reviewState||'Needs review')}</span></div>
+        <div class="parsed-bet-head"><span>Bet ${cIndex+1}</span><span class="import-status-chip ${matchClass}">${escapeAttr(c.reviewState||'Needs review')}</span></div>
         <strong class="parsed-bet-pick">${escapeAttr(c.selection)}${escapeAttr(linePart)}</strong>
         <div class="parsed-bet-meta">${escapeAttr(meta)}${escapeAttr(oddsPart)}</div>
         <div class="parsed-bet-stake">${escapeAttr(stake)}</div>
+        ${matchLine}
         ${c.eventText?`<div class="parsed-bet-event">${escapeAttr(c.eventText)}</div>`:''}
         ${c.stakeConfidence==='medium'?'<div class="parsed-bet-warning">Check wager amount — inferred from screenshot layout.</div>':''}
       </div>`;
@@ -2213,11 +2332,11 @@ function renderScreenshotImporter(){
   return `<div class="screenshot-import-overlay"><section class="screenshot-import-page">
     <div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Screenshots</div><span class="settings-page-top-spacer"></span></div>
     <div class="screenshot-import-scroll">
-      <div class="screenshot-import-summary"><div><strong>${files.length} screenshot${files.length===1?'':'s'}</strong><span>${totalCandidates?`${totalCandidates} wager candidate${totalCandidates===1?'':'s'} detected`:'Bulk review queue'}</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
+      <div class="screenshot-import-summary"><div><strong>Week ${importWeek} import · ${files.length} screenshot${files.length===1?'':'s'}</strong><span>${totalCandidates?`${totalCandidates} wager candidate${totalCandidates===1?'':'s'} detected · Week ${importWeek} only`:`Bulk review queue · Week ${importWeek} only`}</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
       ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
       ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
       <div class="screenshot-import-actions">${files.length?`<button type="button" class="primary" data-process-screenshots ${state.screenshotImportProcessing?'disabled':''}>${state.screenshotImportProcessing?'Processing Screenshots…':(totalCandidates?'Process Remaining Screenshots':'Process Screenshots')}</button>`:''}<button type="button" class="${files.length?'secondary':'primary'}" data-add-screenshots ${state.screenshotImportProcessing?'disabled':''}>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch '+(state.screenshotImportProcessing?'disabled':'')+'>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
-      <div class="screenshot-import-stage-head"><div><span>Stage 2</span><strong>Parse wager details</strong></div><p>TrackPicks reads each screenshot on-device and creates review candidates. Nothing is saved to the Slip yet.</p></div>
+      <div class="screenshot-import-stage-head"><div><span>Stage 3</span><strong>Parse + match Week ${importWeek}</strong></div><p>TrackPicks parses each screenshot and only matches candidates against Week ${importWeek}. Bets from another week are blocked from this batch.</p></div>
       <div class="screenshot-review-list">${cards}</div>
     </div>
   </section></div>`;
@@ -2425,7 +2544,7 @@ function bind(){
   document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
   document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-process-screenshots]').forEach(el=>el.onclick=processScreenshotBatch);
-  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportMessage='';render();});
+  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';render();});
   document.querySelectorAll('[data-import-open-settings]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;state.showSettings=true;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
   document.querySelectorAll('[data-import-history]').forEach(el=>el.onclick=()=>document.querySelector('[data-history-file]')?.click());
