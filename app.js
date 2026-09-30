@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.4.5';
+const BUILD_VERSION = '2.5';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -152,7 +152,9 @@ const state = {
   historyChartKind: null,
   historyPointIndex: null,
   activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
-  gameTeamStats: {}, gameTeamStatsLoading: false
+  gameTeamStats: {}, gameTeamStatsLoading: false,
+  standardUnitSize: null,
+  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: ''
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -1283,7 +1285,7 @@ async function loadUserProfile(){
   }
   const {data,error}=await state.sb
     .from('profiles')
-    .select('display_name,picker_names,is_admin')
+    .select('display_name,picker_names,is_admin,standard_unit_size')
     .eq('user_id',state.user.id)
     .single();
 
@@ -1297,7 +1299,52 @@ async function loadUserProfile(){
   state.displayName=(data?.display_name||'').trim();
   state.pickerNames=Array.isArray(data?.picker_names) ? data.picker_names.filter(Boolean) : [];
   state.isAdmin=!!data?.is_admin;
+  state.standardUnitSize=data?.standard_unit_size==null?null:Number(data.standard_unit_size);
 }
+
+async function saveStandardUnitSize(value){
+  const amount=Number(value);
+  if(!Number.isFinite(amount)||amount<=0) return {ok:false,message:'Enter a valid unit size greater than $0.'};
+  const rounded=Math.round(amount*100)/100;
+  const {error}=await state.sb.from('profiles').update({standard_unit_size:rounded,updated_at:new Date().toISOString()}).eq('user_id',state.user.id);
+  if(error) return {ok:false,message:error.message};
+  state.standardUnitSize=rounded;
+  return {ok:true};
+}
+
+function formatUsd(value){
+  const n=Number(value);
+  if(!Number.isFinite(n))return '—';
+  return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
+}
+
+function fileToDataUrl(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(String(reader.result||''));
+    reader.onerror=()=>reject(reader.error||new Error('Unable to read image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function queueScreenshotFiles(fileList){
+  const incoming=[...(fileList||[])].filter(f=>f&&/^image\//i.test(f.type));
+  if(!incoming.length){state.screenshotImportMessage='Choose one or more image screenshots.';render();return;}
+  const created=[];
+  for(const file of incoming){
+    try{
+      const preview=await fileToDataUrl(file);
+      created.push({id:crypto.randomUUID(),fileName:file.name||'Screenshot',size:file.size||0,type:file.type||'image/*',preview,status:'Queued'});
+    }catch(e){
+      created.push({id:crypto.randomUUID(),fileName:file.name||'Screenshot',size:file.size||0,type:file.type||'image/*',preview:'',status:'Read error'});
+    }
+  }
+  state.screenshotImportFiles=[...state.screenshotImportFiles,...created];
+  state.screenshotImportMessage='';
+  state.showScreenshotImporter=true;
+  render();
+}
+
 
 async function saveDisplayName(name){
   const clean=(name||'').trim();
@@ -1374,7 +1421,7 @@ function render(){
   if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
   if(!cloudConfigured()){ app.innerHTML=renderCloudSetup(); bindAuth(); return; }
   if(!state.user){ app.innerHTML=renderAuth(); bindAuth(); return; }
-  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.historyChartKind?renderHistoryChart():''}${state.activeTeamId?renderTeamScreen():''}`;
+  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.historyChartKind?renderHistoryChart():''}${state.activeTeamId?renderTeamScreen():''}`;
   bind();
 }
 
@@ -1612,7 +1659,8 @@ function renderParlaysSlip(){
 }
 function renderSlip(){
   const pushControls=`<div class="push-results-row"><button class="primary push-results-btn" data-push-results ${state.pushingResults?'disabled':''}>${state.pushingResults?'Checking Results…':'Push Results'}</button>${state.pushResultsMessage?`<div class="push-results-message">${escapeAttr(state.pushResultsMessage)}</div>`:''}</div>`;
-  return `<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
+  const importBar=`<div class="screenshot-import-launch"><div><strong>Screenshot Import</strong><span>Bulk upload sportsbook screenshots and review bets before saving.</span></div><button type="button" class="secondary screenshot-import-btn" data-open-screenshot-import>Import Screenshots</button><input type="file" data-screenshot-file-input accept="image/*" multiple hidden></div>`;
+  return `${importBar}<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
 }
 function wagerMovementSignals(g){
   const history=oddsHistoryForGame(g);
@@ -1935,6 +1983,26 @@ function renderGameSheet(){
   </div>`;
 }
 
+function renderScreenshotImporter(){
+  const files=state.screenshotImportFiles;
+  const unitSet=Number.isFinite(Number(state.standardUnitSize))&&Number(state.standardUnitSize)>0;
+  const cards=files.length?files.map((item,index)=>`<article class="screenshot-review-card">
+    <div class="screenshot-thumb-wrap">${item.preview?`<img src="${escapeAttr(item.preview)}" class="screenshot-thumb" alt="Screenshot ${index+1}">`:'<div class="screenshot-thumb-error">Image unavailable</div>'}</div>
+    <div class="screenshot-review-copy"><div class="screenshot-review-top"><strong>Screenshot ${index+1}</strong><span class="import-status-chip">${escapeAttr(item.status||'Queued')}</span></div><div class="screenshot-file-name">${escapeAttr(item.fileName)}</div><div class="screenshot-review-note">Ready for wager parsing. No bet will be added to your Slip until you approve it.</div></div>
+  </article>`).join(''):`<div class="screenshot-import-empty"><strong>No screenshots selected yet.</strong><span>Select one or many sportsbook screenshots to start a review batch.</span></div>`;
+  return `<div class="screenshot-import-overlay"><section class="screenshot-import-page">
+    <div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Screenshots</div><span class="settings-page-top-spacer"></span></div>
+    <div class="screenshot-import-scroll">
+      <div class="screenshot-import-summary"><div><strong>${files.length} screenshot${files.length===1?'':'s'}</strong><span>Bulk review queue</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
+      ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
+      ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
+      <div class="screenshot-import-actions"><button type="button" class="primary" data-add-screenshots>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
+      <div class="screenshot-import-stage-head"><div><span>Stage 1</span><strong>Upload & review queue</strong></div><p>Parsing, game matching, duplicate detection, and approval will happen in this same flow as 2.5 develops.</p></div>
+      <div class="screenshot-review-list">${cards}</div>
+    </div>
+  </section></div>`;
+}
+
 function renderSettingsSheet(){
   const adminApiSection = state.isAdmin ? `
     <div class="security-note">
@@ -1981,6 +2049,16 @@ function renderSettingsSheet(){
           <input id="settingsDisplayNameInput" type="text" maxlength="40" value="${escapeAttr(state.displayName||'')}" placeholder="Nickname or display name">
         </div>
         <button class="secondary full-width" data-save-display-name>Save Display Name</button>
+      </div>
+
+      <div class="settings-section">
+        <div class="section-title">Betting Units</div>
+        <div class="field full settings-field">
+          <label>Standard Unit Size (USD)</label>
+          <input id="standardUnitSizeInput" type="number" min="0.01" step="0.01" inputmode="decimal" value="${state.standardUnitSize??''}" placeholder="25.00">
+        </div>
+        <button class="secondary full-width" data-save-unit-size>Save Standard Unit Size</button>
+        <div class="report-note">Used by Screenshot Import to convert a detected dollar wager into TrackPicks units. Example: $50 ÷ $25 = 2.0u.</div>
       </div>
 
       ${adminApiSection}
@@ -2120,6 +2198,14 @@ function bind(){
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{state.view=el.dataset.nav;render();});
   document.querySelectorAll('[data-settings]').forEach(el=>el.onclick=()=>{state.showSettings=true;render();});
   document.querySelectorAll('[data-close-settings]').forEach(el=>el.onclick=()=>{state.showSettings=false;render();});
+  document.querySelectorAll('[data-save-unit-size]').forEach(el=>el.onclick=async()=>{const input=document.getElementById('standardUnitSizeInput');const result=await saveStandardUnitSize(input?.value);if(!result.ok){alert(result.message);return;}el.textContent='✓ Saved';setTimeout(()=>{if(document.body.contains(el))el.textContent='Save Standard Unit Size';},1200);});
+  document.querySelectorAll('[data-open-screenshot-import]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-file-input]')?.click());
+  document.querySelectorAll('[data-screenshot-file-input]').forEach(el=>el.onchange=async()=>{const files=el.files;el.value='';await queueScreenshotFiles(files);});
+  document.querySelectorAll('[data-close-screenshot-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;render();});
+  document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
+  document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=el.files;el.value='';await queueScreenshotFiles(files);});
+  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{state.screenshotImportFiles=[];state.screenshotImportMessage='';render();});
+  document.querySelectorAll('[data-import-open-settings]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;state.showSettings=true;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
   document.querySelectorAll('[data-import-history]').forEach(el=>el.onclick=()=>document.querySelector('[data-history-file]')?.click());
   document.querySelectorAll('[data-download-import-template]').forEach(el=>el.onclick=downloadImportTemplate);
