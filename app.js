@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.3.1.2';
+const BUILD_VERSION = '2.3.1.3';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1602,14 +1602,15 @@ function teamScreenLineFor(g,teamId){
   return String(g.closing_spread_team_id)===String(teamId)?n:-n;
 }
 function teamScreenRecord(teamId){
-  let wins=0,losses=0,ties=0,atsWins=0,atsLosses=0,atsPushes=0;
+  let wins=0,losses=0,ties=0,atsWins=0,atsLosses=0,atsPushes=0,overWins=0,overLosses=0,overPushes=0;
   for(const g of state.teamScreenGames||[]){
     const r=teamScreenResultFor(g,teamId);
     if(r==='W')wins++;else if(r==='L')losses++;else if(r==='T')ties++;
     const a=teamScreenAtsFor(g,teamId);
     if(a==='Win')atsWins++;else if(a==='Loss')atsLosses++;else if(a==='Push')atsPushes++;
+    if(g.total_result==='Over')overWins++;else if(g.total_result==='Under')overLosses++;else if(g.total_result==='Push')overPushes++;
   }
-  return {wins,losses,ties,atsWins,atsLosses,atsPushes};
+  return {wins,losses,ties,atsWins,atsLosses,atsPushes,overWins,overLosses,overPushes};
 }
 function renderTeamScreen(){
   const teamId=String(state.activeTeamId||'');
@@ -1622,6 +1623,7 @@ function renderTeamScreen(){
   const rec=teamScreenRecord(teamId);
   const overall=rec.ties?`${rec.wins}-${rec.losses}-${rec.ties}`:`${rec.wins}-${rec.losses}`;
   const ats=rec.atsPushes?`${rec.atsWins}-${rec.atsLosses}-${rec.atsPushes}`:`${rec.atsWins}-${rec.atsLosses}`;
+  const overs=rec.overPushes?`${rec.overWins}-${rec.overLosses}-${rec.overPushes}`:`${rec.overWins}-${rec.overLosses}`;
   const games=[...(state.teamScreenGames||[])].sort((a,b)=>new Date(a.commence_time)-new Date(b.commence_time));
   let body='';
   if(state.teamScreenLoading)body='<div class="team-page-loading">Loading 2026 schedule…</div>';
@@ -1642,12 +1644,24 @@ function renderTeamScreen(){
     const line=teamScreenLineFor(g,teamId);
     const lineText=line==null?'—':signed(line);
     const totalText=g.closing_total==null?'—':String(Number(g.closing_total));
-    const oppLogo=opponentMeta?.logoUrl?`<img src="${escapeAttr(opponentMeta.logoUrl)}" alt="">`:`<span>${escapeAttr(opponentMeta?.abbreviation||teamMonogram(opponent))}</span>`;
+    const totalResult=g.total_result||'';
+    const opponentAbbr=opponentMeta?.abbreviation||teamMonogram(opponent);
+    const oppLogo=opponentMeta?.logoUrl?`<img src="${escapeAttr(opponentMeta.logoUrl)}" alt="">`:`<span>${escapeAttr(opponentAbbr)}</span>`;
+    const kickoff=formatKickoff(g.commence_time).time||'';
     return `<div class="team-schedule-row ${g.game_completed?'completed':'upcoming'}">
-      <div class="team-week-date"><strong>W${g.week}</strong><span>${escapeAttr(dateLabel)}</span></div>
-      <div class="team-opponent">${oppLogo}<div><strong>${isAway?'@ ':''}${escapeAttr(opponent)}</strong><span>${isAway?'Away':'Home'}</span></div></div>
-      <div class="team-result-cell">${result?`<strong class="team-result-${result.toLowerCase()}">${result} ${score}</strong>`:'<strong>Upcoming</strong>'}<span>${g.game_completed?(atsResult?`${atsResult} ATS`:'ATS —'):(formatKickoff(g.commence_time).time||'')}</span></div>
-      <div class="team-line-cell"><strong>${lineText}</strong><span>O/U ${totalText}</span></div>
+      <div class="team-game-identity">
+        <div class="team-week-date"><strong>W${g.week}</strong><span>${escapeAttr(dateLabel)}</span></div>
+        <div class="team-opponent">${oppLogo}<div><strong>${isAway?'@ ':''}${escapeAttr(opponentAbbr)}</strong><span>${isAway?'Away':'Home'}</span></div></div>
+        ${!g.game_completed?`<div class="team-upcoming-time">${escapeAttr(kickoff||'TBD')}</div>`:''}
+      </div>
+      ${g.game_completed?`<div class="team-game-metrics">
+        <div><span>Result</span><strong class="team-result-${String(result||'').toLowerCase()}">${escapeAttr(result||'—')}</strong></div>
+        <div><span>Score</span><strong>${escapeAttr(score)}</strong></div>
+        <div><span>ATS</span><strong class="team-ats-${String(atsResult||'').toLowerCase()}">${escapeAttr(atsResult||'—')}</strong></div>
+        <div><span>Spread</span><strong>${escapeAttr(lineText)}</strong></div>
+        <div><span>Total</span><strong class="team-total-${String(totalResult||'').toLowerCase()}">${escapeAttr(totalResult||'—')}</strong></div>
+        <div><span>O/U</span><strong>${escapeAttr(totalText)}</strong></div>
+      </div>`:''}
     </div>`;
   }).join('')}</div>`;
   return `<div class="team-page-overlay">
@@ -1655,8 +1669,8 @@ function renderTeamScreen(){
       <div class="team-page-top"><button class="team-back-btn" data-close-team aria-label="Back">‹</button><div class="team-page-title">2026 Team</div><span class="team-page-top-spacer"></span></div>
       <div class="team-page-scroll">
         <section class="team-page-hero">${logo}<div class="team-page-name"><h2>${escapeAttr(display.school||teamName)}</h2><div>${escapeAttr(display.mascot||'')}</div><span>${escapeAttr(meta?.conference||'')}</span></div></section>
-        <div class="team-record-grid"><div><strong>${overall}</strong><span>Overall</span></div><div><strong>${ats}</strong><span>ATS</span></div></div>
-        <div class="team-schedule-heading"><strong>2026 Schedule</strong><span>Closing line · result · ATS</span></div>
+        <div class="team-record-grid"><div><strong>${overall}</strong><span>Overall</span></div><div><strong>${ats}</strong><span>ATS</span></div><div><strong>${overs}</strong><span>Overs</span></div></div>
+        <div class="team-schedule-heading"><strong>2026 Schedule</strong><span>Results · closing lines</span></div>
         ${body}
       </div>
     </section>
