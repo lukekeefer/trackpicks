@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.1';
+const BUILD_VERSION = '2.5.2';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -154,7 +154,7 @@ const state = {
   activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
   gameTeamStats: {}, gameTeamStatsLoading: false,
   standardUnitSize: null,
-  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: ''
+  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -1346,6 +1346,207 @@ async function queueScreenshotFiles(fileList){
 }
 
 
+let screenshotOcrLoader=null;
+function ensureScreenshotOcr(){
+  if(window.Tesseract) return Promise.resolve(window.Tesseract);
+  if(screenshotOcrLoader) return screenshotOcrLoader;
+  screenshotOcrLoader=new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    script.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+    script.async=true;
+    script.onload=()=>window.Tesseract?resolve(window.Tesseract):reject(new Error('OCR library did not initialize.'));
+    script.onerror=()=>reject(new Error('Unable to load the screenshot parser. Check your connection and try again.'));
+    document.head.appendChild(script);
+  }).catch(err=>{screenshotOcrLoader=null;throw err;});
+  return screenshotOcrLoader;
+}
+
+function normalizeOcrBetText(text){
+  let t=String(text||'')
+    .replace(/[−–—]/g,'-')
+    .replace(/[＋]/g,'+')
+    .replace(/\u00a0/g,' ')
+    // OCR commonly collapses 6 1/2 into 61⁄2. Treat that sportsbook fraction form as 6.5.
+    .replace(/([+-]?\d{1,2})1[⁄/]2\b/g,(_,n)=>`${n}.5`)
+    .replace(/([+-]?\d{1,2})1½/g,(_,n)=>`${n}.5`)
+    .replace(/(\d+)\s*[⁄/]\s*2\b/g,(_,n)=>`${n}.5`)
+    .replace(/(\d+)½/g,(_,n)=>`${n}.5`)
+    .replace(/\b(\d+)\s+1\/2\b/g,(_,n)=>`${n}.5`);
+  return t.split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean).join('\n');
+}
+
+function detectScreenshotSportsbook(text){
+  const t=String(text||'');
+  if(/Fanatics Sportsbook/i.test(t)) return 'Fanatics';
+  if(/Bet ID:\s*DK/i.test(t)||/DraftKings/i.test(t)) return 'DraftKings';
+  if(/BetMGM/i.test(t)) return 'BetMGM';
+  if(/Caesars Sportsbook|Caesars/i.test(t)) return 'Caesars';
+  return 'Sportsbook';
+}
+
+function parseMoneyToken(value){
+  const m=String(value||'').match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
+  if(!m)return null;
+  const n=Number(m[1].replace(/,/g,''));
+  return Number.isFinite(n)?n:null;
+}
+
+function cleanSelectionName(value){
+  return String(value||'')
+    .replace(/^[•·\-]+\s*/,'')
+    .replace(/\s+(SPREAD|TOTAL|MONEYLINE|ML)$/i,'')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function normalizeLineNumber(raw){
+  const cleaned=String(raw||'').replace(/[|Il]/g,'').replace(/\s+/g,'');
+  const m=cleaned.match(/[+-]?\d+(?:\.\d+)?/);
+  if(!m)return null;
+  const n=Number(m[0]);
+  return Number.isFinite(n)?n:null;
+}
+
+function inferCandidateType(selection, nearby){
+  const n=String(nearby||'');
+  if(/\b(total|over|under)\b/i.test(n)||/^\s*(Over|Under)\b/i.test(selection))return 'Total';
+  if(/\b(moneyline|money line|ML)\b/i.test(n))return 'Moneyline';
+  return 'Spread';
+}
+
+function findCandidateStake(lines,start,end){
+  const stop=Math.min(lines.length,end??start+14);
+  for(let i=start;i<stop;i++){
+    if(/\bWager\b/i.test(lines[i])){
+      const same=parseMoneyToken(lines[i]);
+      if(same!=null)return {value:same,confidence:'high'};
+      for(let j=i+1;j<Math.min(stop,i+4);j++){
+        const n=parseMoneyToken(lines[j]);
+        if(n!=null)return {value:n,confidence:'high'};
+      }
+    }
+  }
+  for(let i=start;i<stop;i++){
+    const n=parseMoneyToken(lines[i]);
+    if(n!=null)return {value:n,confidence:'medium'};
+  }
+  return {value:null,confidence:'missing'};
+}
+
+function findNearbyMeta(lines,start,end){
+  const stop=Math.min(lines.length,end??start+16);
+  let sourceBetId='',placedAt='',status='',eventText='';
+  // Status can sit immediately above the selection, but ticket metadata belongs after it.
+  for(let i=Math.max(0,start-2);i<Math.min(stop,start+5);i++){
+    const line=lines[i];
+    if(!status&&/^(Open|Won|Lost|Push|Pushed|Settled)$/i.test(line))status=line.replace(/^./,c=>c.toUpperCase());
+  }
+  for(let i=start;i<stop;i++){
+    const line=lines[i];
+    if(!sourceBetId){const m=line.match(/Bet ID:\s*([^\s]+)/i);if(m)sourceBetId=m[1];}
+    if(!placedAt){const m=line.match(/Placed:\s*(.+)$/i);if(m)placedAt=m[1].trim();}
+    if(!eventText&&(/\s@\s|\sat\s/i.test(line))&&!/Placed:/i.test(line))eventText=line.replace(/^NCAAF\s*[•·-]?\s*/i,'').trim();
+  }
+  return {sourceBetId,placedAt,status,eventText};
+}
+
+function parseScreenshotCandidates(rawText,standardUnitSize){
+  const text=normalizeOcrBetText(rawText);
+  const lines=text.split('\n');
+  const sportsbook=detectScreenshotSportsbook(text);
+  const starts=[];
+  const seen=new Set();
+  const add=(index,selection,line,odds,typeHint='')=>{
+    selection=cleanSelectionName(selection);
+    if(!selection||selection.length<2||/^(Wager|Payout|Cash|Final|Finished|Open|Won|Lost)$/i.test(selection))return;
+    const lineNum=line==null?null:Number(line);
+    const oddsNum=odds==null?null:Number(odds);
+    const key=`${index}|${selection}|${lineNum}|${oddsNum}`;
+    if(seen.has(key))return;
+    seen.add(key);starts.push({index,selection,line:lineNum,odds:Number.isFinite(oddsNum)?oddsNum:null,typeHint});
+  };
+
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    // Team/selection + line + American odds on one OCR line.
+    let m=line.match(/^(.+?)\s+([+-]\d+(?:\.\d+)?)\s*(?:[|Il1•·]\s*)?([+-]\d{3,4})\b/);
+    if(m){add(i,m[1],m[2],m[3]);continue;}
+    // Over/Under often appears as "Over 47.5 -110".
+    m=line.match(/^((?:Over|Under)\b.*?)\s+([+-]?\d+(?:\.\d+)?)\s+([+-]\d{3,4})\b/i);
+    if(m){add(i,m[1],m[2],m[3],'Total');continue;}
+    // Selection + line, odds on the next line (common on Fanatics).
+    m=line.match(/^(.+?)\s+([+-]\d+(?:\.\d+)?)$/);
+    if(m&&lines[i+1]&&/^[-+]\d{3,4}$/.test(lines[i+1])){
+      add(i,m[1],m[2],lines[i+1]);continue;
+    }
+    // Selection is one line, spread is next line, market label follows (compact bet lists).
+    if(/^[A-Za-z][A-Za-z0-9 .&'()-]{1,45}$/.test(line)&&lines[i+1]&&/^[+-]\d+(?:\.\d+)?$/.test(lines[i+1])){
+      const nextMarket=(lines[i+2]||'');
+      if(/^(SPREAD|TOTAL|MONEYLINE|ML)$/i.test(nextMarket))add(i,line,lines[i+1],null,nextMarket);
+    }
+  }
+
+  starts.sort((a,b)=>a.index-b.index);
+  return starts.map((base,idx)=>{
+    const next=starts[idx+1]?.index??Math.min(lines.length,base.index+18);
+    const nearby=lines.slice(base.index,Math.min(lines.length,next)).join('\n');
+    const type=inferCandidateType(base.selection,`${base.typeHint}\n${nearby}`);
+    const stake=findCandidateStake(lines,base.index,next);
+    const meta=findNearbyMeta(lines,base.index,next);
+    const units=(stake.value!=null&&Number(standardUnitSize)>0)?Math.round((stake.value/Number(standardUnitSize))*100)/100:null;
+    let selection=base.selection;
+    if(type==='Total')selection=selection.replace(/\s+[+-]?\d+(?:\.\d+)?$/,'').trim();
+    return {
+      id:crypto.randomUUID(),sportsbook,selection,betType:type,line:base.line,odds:base.odds,
+      stakeUsd:stake.value,units,stakeConfidence:stake.confidence,status:meta.status,eventText:meta.eventText,
+      placedAt:meta.placedAt,sourceBetId:meta.sourceBetId,reviewState:'Needs game match'
+    };
+  });
+}
+
+async function processScreenshotBatch(){
+  if(state.screenshotImportProcessing)return;
+  const targets=state.screenshotImportFiles.filter(x=>x.preview&&(!x.candidates||!x.candidates.length)&&x.status!=='Parsing');
+  if(!targets.length){state.screenshotImportMessage='Every screenshot in this batch has already been processed.';render();return;}
+  state.screenshotImportProcessing=true;
+  state.screenshotImportMessage='';
+  render();
+  let worker=null;
+  try{
+    const T=await ensureScreenshotOcr();
+    worker=await T.createWorker('eng',T.OEM?.LSTM_ONLY??1,{logger:m=>{
+      if(m?.status!=='recognizing text')return;
+      const active=state.screenshotImportFiles.find(x=>x.status==='Parsing');
+      if(!active)return;
+      const pct=Math.max(0,Math.min(99,Math.round((m.progress||0)*100)));
+      if(active.progress!==pct){active.progress=pct;if(pct%10===0)render();}
+    }});
+    for(const item of targets){
+      item.status='Parsing';item.progress=0;item.error='';render();
+      try{
+        const result=await worker.recognize(item.preview);
+        item.ocrText=normalizeOcrBetText(result?.data?.text||'');
+        item.candidates=parseScreenshotCandidates(item.ocrText,state.standardUnitSize);
+        item.status=item.candidates.length?`${item.candidates.length} bet${item.candidates.length===1?'':'s'} found`:'Needs review';
+        item.progress=100;
+        if(!item.candidates.length)item.error='No wager was confidently detected. Keep this screenshot in the batch for manual review.';
+      }catch(err){
+        console.error('Screenshot OCR error',err);
+        item.status='Parse error';item.error=err?.message||'Unable to parse screenshot.';
+      }
+      render();
+    }
+  }catch(err){
+    console.error('Screenshot parser load error',err);
+    state.screenshotImportMessage=err?.message||'Unable to start screenshot parsing.';
+  }finally{
+    try{await worker?.terminate();}catch(_e){}
+    state.screenshotImportProcessing=false;
+    render();
+  }
+}
+
+
 async function saveDisplayName(name){
   const clean=(name||'').trim();
   if(!clean) return {ok:false,message:'Enter a display name.'};
@@ -1986,18 +2187,37 @@ function renderGameSheet(){
 function renderScreenshotImporter(){
   const files=state.screenshotImportFiles;
   const unitSet=Number.isFinite(Number(state.standardUnitSize))&&Number(state.standardUnitSize)>0;
-  const cards=files.length?files.map((item,index)=>`<article class="screenshot-review-card">
-    <div class="screenshot-thumb-wrap">${item.preview?`<img src="${escapeAttr(item.preview)}" class="screenshot-thumb" alt="Screenshot ${index+1}">`:'<div class="screenshot-thumb-error">Image unavailable</div>'}</div>
-    <div class="screenshot-review-copy"><div class="screenshot-review-top"><strong>Screenshot ${index+1}</strong><span class="import-status-chip">${escapeAttr(item.status||'Queued')}</span></div><div class="screenshot-file-name">${escapeAttr(item.fileName)}</div><div class="screenshot-review-note">Ready for wager parsing. No bet will be added to your Slip until you approve it.</div></div>
-  </article>`).join(''):`<div class="screenshot-import-empty"><strong>No screenshots selected yet.</strong><span>Select one or many sportsbook screenshots to start a review batch.</span></div>`;
+  const totalCandidates=files.reduce((sum,item)=>sum+(item.candidates?.length||0),0);
+  const cards=files.length?files.map((item,index)=>{
+    const candidates=(item.candidates||[]).map((c,cIndex)=>{
+      const stake=c.stakeUsd==null?'Stake not detected':`${formatUsd(c.stakeUsd)}${c.units!=null?` → ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u`:''}`;
+      const linePart=c.line==null?'':` ${signed(c.line)}`;
+      const oddsPart=c.odds==null?'':` · ${signed(c.odds)}`;
+      const meta=[c.sportsbook,c.betType,c.status].filter(Boolean).join(' · ');
+      return `<div class="parsed-bet-card">
+        <div class="parsed-bet-head"><span>Bet ${cIndex+1}</span><span class="import-status-chip review">${escapeAttr(c.reviewState||'Needs review')}</span></div>
+        <strong class="parsed-bet-pick">${escapeAttr(c.selection)}${escapeAttr(linePart)}</strong>
+        <div class="parsed-bet-meta">${escapeAttr(meta)}${escapeAttr(oddsPart)}</div>
+        <div class="parsed-bet-stake">${escapeAttr(stake)}</div>
+        ${c.eventText?`<div class="parsed-bet-event">${escapeAttr(c.eventText)}</div>`:''}
+        ${c.stakeConfidence==='medium'?'<div class="parsed-bet-warning">Check wager amount — inferred from screenshot layout.</div>':''}
+      </div>`;
+    }).join('');
+    const status=item.status==='Parsing'?`Parsing ${item.progress||0}%`:(item.status||'Queued');
+    return `<article class="screenshot-review-card ${item.candidates?.length?'has-results':''}">
+      <div class="screenshot-thumb-wrap">${item.preview?`<img src="${escapeAttr(item.preview)}" class="screenshot-thumb" alt="Screenshot ${index+1}">`:'<div class="screenshot-thumb-error">Image unavailable</div>'}</div>
+      <div class="screenshot-review-copy"><div class="screenshot-review-top"><strong>Screenshot ${index+1}</strong><span class="import-status-chip ${item.status==='Parsing'?'working':''}">${escapeAttr(status)}</span></div><div class="screenshot-file-name">${escapeAttr(item.fileName)}</div>${item.status==='Parsing'?`<div class="import-progress"><span style="width:${Number(item.progress)||0}%"></span></div>`:''}<div class="screenshot-review-note">${item.candidates?.length?'Parsed locally. Review the detected wager details below.':'Ready for wager parsing. No bet will be added to your Slip until you approve it.'}</div>${item.error?`<div class="parsed-bet-warning">${escapeAttr(item.error)}</div>`:''}</div>
+      ${candidates?`<div class="parsed-bets-list">${candidates}</div>`:''}
+    </article>`;
+  }).join(''):`<div class="screenshot-import-empty"><strong>No screenshots selected yet.</strong><span>Select one or many sportsbook screenshots to start a review batch.</span></div>`;
   return `<div class="screenshot-import-overlay"><section class="screenshot-import-page">
     <div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Screenshots</div><span class="settings-page-top-spacer"></span></div>
     <div class="screenshot-import-scroll">
-      <div class="screenshot-import-summary"><div><strong>${files.length} screenshot${files.length===1?'':'s'}</strong><span>Bulk review queue</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
+      <div class="screenshot-import-summary"><div><strong>${files.length} screenshot${files.length===1?'':'s'}</strong><span>${totalCandidates?`${totalCandidates} wager candidate${totalCandidates===1?'':'s'} detected`:'Bulk review queue'}</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
       ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
       ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
-      <div class="screenshot-import-actions"><button type="button" class="primary" data-add-screenshots>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
-      <div class="screenshot-import-stage-head"><div><span>Stage 1</span><strong>Upload & review queue</strong></div><p>Parsing, game matching, duplicate detection, and approval will happen in this same flow as 2.5 develops.</p></div>
+      <div class="screenshot-import-actions">${files.length?`<button type="button" class="primary" data-process-screenshots ${state.screenshotImportProcessing?'disabled':''}>${state.screenshotImportProcessing?'Processing Screenshots…':(totalCandidates?'Process Remaining Screenshots':'Process Screenshots')}</button>`:''}<button type="button" class="${files.length?'secondary':'primary'}" data-add-screenshots ${state.screenshotImportProcessing?'disabled':''}>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch '+(state.screenshotImportProcessing?'disabled':'')+'>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
+      <div class="screenshot-import-stage-head"><div><span>Stage 2</span><strong>Parse wager details</strong></div><p>TrackPicks reads each screenshot on-device and creates review candidates. Nothing is saved to the Slip yet.</p></div>
       <div class="screenshot-review-list">${cards}</div>
     </div>
   </section></div>`;
@@ -2204,7 +2424,8 @@ function bind(){
   document.querySelectorAll('[data-close-screenshot-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;render();});
   document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
   document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
-  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{state.screenshotImportFiles=[];state.screenshotImportMessage='';render();});
+  document.querySelectorAll('[data-process-screenshots]').forEach(el=>el.onclick=processScreenshotBatch);
+  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportMessage='';render();});
   document.querySelectorAll('[data-import-open-settings]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;state.showSettings=true;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
   document.querySelectorAll('[data-import-history]').forEach(el=>el.onclick=()=>document.querySelector('[data-history-file]')?.click());
