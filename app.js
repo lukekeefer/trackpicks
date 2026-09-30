@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5';
+const BUILD_VERSION = '2.5.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -2200,10 +2200,10 @@ function bind(){
   document.querySelectorAll('[data-close-settings]').forEach(el=>el.onclick=()=>{state.showSettings=false;render();});
   document.querySelectorAll('[data-save-unit-size]').forEach(el=>el.onclick=async()=>{const input=document.getElementById('standardUnitSizeInput');const result=await saveStandardUnitSize(input?.value);if(!result.ok){alert(result.message);return;}el.textContent='✓ Saved';setTimeout(()=>{if(document.body.contains(el))el.textContent='Save Standard Unit Size';},1200);});
   document.querySelectorAll('[data-open-screenshot-import]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-file-input]')?.click());
-  document.querySelectorAll('[data-screenshot-file-input]').forEach(el=>el.onchange=async()=>{const files=el.files;el.value='';await queueScreenshotFiles(files);});
+  document.querySelectorAll('[data-screenshot-file-input]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-close-screenshot-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;render();});
   document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
-  document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=el.files;el.value='';await queueScreenshotFiles(files);});
+  document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{state.screenshotImportFiles=[];state.screenshotImportMessage='';render();});
   document.querySelectorAll('[data-import-open-settings]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;state.showSettings=true;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
