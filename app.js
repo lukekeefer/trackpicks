@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.4.2';
+const BUILD_VERSION = '2.4.3';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1419,7 +1419,7 @@ function topbar(){
   if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
   return appHeader();
 }
-function bottomNav(){ if(state.view==='weeks'||state.activeGameId||state.activeTeamId)return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
+function bottomNav(){ if(state.view==='weeks'||state.activeGameId||state.activeTeamId||state.showSettings)return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
 function renderMarket(){
@@ -1948,16 +1948,15 @@ function renderSettingsSheet(){
     <hr class="settings-divider">
   ` : '';
 
-  return `<div class="overlay">
-    <section class="sheet settings-sheet">
-      <div class="sheet-handle"></div>
-      <div class="close-row">
-        <div>
-          <h2 style="margin:0">Settings</h2>
-          <div class="detail-meta">${escapeAttr(state.user?.email||'')}</div>
-        </div>
-        <button class="icon-btn" data-close-settings>✕</button>
+  return `<div class="settings-page-overlay">
+    <section class="settings-page-sheet">
+      <div class="settings-page-top">
+        <button class="settings-back-btn" data-close-settings aria-label="Back">‹</button>
+        <div class="settings-page-title">Settings</div>
+        <span class="settings-page-top-spacer"></span>
       </div>
+      <div class="settings-page-scroll">
+        <div class="settings-page-account">${escapeAttr(state.user?.email||'')}</div>
       
       <div class="settings-section">
         <div class="section-title">Profile</div>
@@ -2000,6 +1999,7 @@ function renderSettingsSheet(){
       </div>
       <button class="secondary full-width" data-sync-now>Sync Now</button>
       <button class="danger-outline" data-signout>Log Out</button>
+      </div>
     </section>
   </div>`;
 }
