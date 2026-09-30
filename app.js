@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.4.0';
+const BUILD_VERSION = '2.4.0.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1980,13 +1980,13 @@ function bindAuth(){
 
 function bindDynamicSelections(){ document.querySelectorAll('[data-bet-kind][data-selection]').forEach(el=>el.onclick=()=>{if(el.disabled)return;captureWagerDraft();tempKind=el.dataset.betKind;tempSelection=el.dataset.selection;const g=gameById(state.activeGameId);const defaultPayout=tempKind==='Moneyline'?marketOddsFor(g,tempKind,tempSelection):-110;tempPayout=defaultPayout==null?'':String(defaultPayout);document.querySelectorAll('[data-bet-kind][data-selection]').forEach(b=>b.classList.toggle('selected',b.dataset.betKind===tempKind&&b.dataset.selection===tempSelection));const payout=document.getElementById('payoutInput');if(payout)payout.value=tempPayout;}); }
 function captureGameSheetScroll(){
-  const sheet=document.querySelector('.game-detail-sheet');
+  const sheet=document.querySelector('.game-page-scroll')||document.querySelector('.game-detail-sheet');
   return sheet?sheet.scrollTop:null;
 }
 function restoreGameSheetScroll(scrollTop){
   if(scrollTop==null)return;
   requestAnimationFrame(()=>{
-    const sheet=document.querySelector('.game-detail-sheet');
+    const sheet=document.querySelector('.game-page-scroll')||document.querySelector('.game-detail-sheet');
     if(sheet)sheet.scrollTop=scrollTop;
   });
 }
@@ -2102,8 +2102,8 @@ function bind(){
   document.querySelectorAll('[data-open-team]').forEach(el=>el.onclick=(event)=>{event.preventDefault();event.stopPropagation();openTeamScreen(el.dataset.openTeam);});
   document.querySelectorAll('[data-close-team]').forEach(el=>el.onclick=()=>{state.activeTeamId=null;state.activeTeamName='';state.teamScreenGames=[];state.teamScreenLoading=false;state.teamScreenError='';render();});
   document.querySelectorAll('[data-close]').forEach(el=>el.onclick=()=>{state.activeGameId=null;state.editWagerId=null;state.historyChartKind=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
-  document.querySelectorAll('[data-open-history]').forEach(el=>el.onclick=()=>{captureWagerDraft();state.historyChartKind=el.dataset.openHistory;render();});
-  document.querySelectorAll('[data-close-history]').forEach(el=>el.onclick=()=>{state.historyChartKind=null;render();});
+  document.querySelectorAll('[data-open-history]').forEach(el=>el.onclick=(event)=>{event.preventDefault();captureWagerDraft();const scrollTop=captureGameSheetScroll();state.historyChartKind=el.dataset.openHistory;render();restoreGameSheetScroll(scrollTop);});
+  document.querySelectorAll('[data-close-history]').forEach(el=>el.onclick=(event)=>{event.preventDefault();const scrollTop=captureGameSheetScroll();state.historyChartKind=null;render();restoreGameSheetScroll(scrollTop);});
   bindDynamicSelections();
   document.querySelectorAll('[data-save-wager]').forEach(el=>el.onclick=saveCurrentWager);
   document.querySelectorAll('[data-add-to-parlay]').forEach(el=>el.onclick=addCurrentSelectionToParlay);
