@@ -1467,3 +1467,59 @@ html,body{min-height:100%;min-height:100dvh}
     margin-right:-6px;
   }
 }
+
+/* TrackPicks 2.3.1 — Team Screen foundation */
+.matchup-logo-button{appearance:none;border:0;background:transparent;padding:0;margin:0;display:block;cursor:pointer;border-radius:24px}
+.matchup-logo-button .matchup-logo{margin-bottom:10px}
+.matchup-logo-button:focus-visible{outline:3px solid rgba(37,99,235,.22);outline-offset:4px}
+.team-page-overlay{z-index:90}
+.team-page-sheet{max-width:760px;padding-bottom:calc(34px + env(safe-area-inset-bottom));}
+.team-page-top{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;margin:0 0 10px}
+.team-back-btn{width:40px;height:40px;border:0;background:#f3f4f6;border-radius:14px;font-size:32px;line-height:1;color:#111827;cursor:pointer}
+.team-page-title{text-align:center;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.team-page-top-spacer{display:block}
+.team-page-hero{display:flex;align-items:center;gap:18px;padding:8px 4px 18px}
+.team-page-logo{width:86px;height:86px;object-fit:contain;flex:0 0 86px}
+.team-page-logo-fallback{display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:#f3f4f6;border-radius:24px;font-size:20px;font-weight:900}
+.team-page-name{min-width:0}
+.team-page-name h2{font-size:24px;line-height:1.05;margin:0 0 3px;color:#111827}
+.team-page-name>div{font-size:15px;font-weight:750;color:#475467;margin-bottom:6px}
+.team-page-name>span{display:inline-block;font-size:11px;font-weight:850;letter-spacing:.05em;text-transform:uppercase;color:#667085;background:#f2f4f7;border-radius:999px;padding:5px 8px}
+.team-record-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}
+.team-record-grid>div{border:1px solid var(--line);border-radius:16px;padding:12px 14px;background:#fff;text-align:center}
+.team-record-grid strong{display:block;font-size:21px;line-height:1.1}
+.team-record-grid span{display:block;margin-top:4px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.team-schedule-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;border-bottom:1px solid var(--line);padding:0 2px 9px;margin-bottom:4px}
+.team-schedule-heading strong{font-size:16px}
+.team-schedule-heading span{font-size:10px;color:var(--muted)}
+.team-schedule-list{display:flex;flex-direction:column}
+.team-schedule-row{display:grid;grid-template-columns:52px minmax(0,1fr) 92px 62px;align-items:center;gap:9px;padding:11px 2px;border-bottom:1px solid #eceff3}
+.team-week-date strong,.team-week-date span{display:block}
+.team-week-date strong{font-size:11px;color:#344054}
+.team-week-date span{font-size:10px;color:var(--muted);margin-top:2px}
+.team-opponent{display:flex;align-items:center;gap:9px;min-width:0}
+.team-opponent>img,.team-opponent>span{width:34px;height:34px;flex:0 0 34px;object-fit:contain}
+.team-opponent>span{display:flex;align-items:center;justify-content:center;border-radius:10px;background:#f3f4f6;border:1px solid var(--line);font-size:9px;font-weight:900}
+.team-opponent>div{min-width:0}
+.team-opponent strong,.team-opponent span:not(:first-child){display:block}
+.team-opponent strong{font-size:12px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.team-opponent div span{font-size:9px;color:var(--muted);margin-top:3px}
+.team-result-cell{text-align:right}
+.team-result-cell strong,.team-result-cell span{display:block}
+.team-result-cell strong{font-size:12px}
+.team-result-cell span{font-size:9px;color:var(--muted);margin-top:3px}
+.team-result-w{color:#16803c}.team-result-l{color:#b42318}.team-result-t{color:#667085}
+.team-line-cell{text-align:right}
+.team-line-cell strong,.team-line-cell span{display:block}
+.team-line-cell strong{font-size:12px;color:#344054}
+.team-line-cell span{font-size:9px;color:var(--muted);margin-top:3px}
+.team-page-loading{padding:36px 10px;text-align:center;color:var(--muted);font-weight:700}
+@media(max-width:560px){
+  .team-page-sheet{padding-left:16px;padding-right:16px}
+  .team-page-logo{width:72px;height:72px;flex-basis:72px}
+  .team-page-name h2{font-size:21px}
+  .team-schedule-row{grid-template-columns:42px minmax(0,1fr) 78px 54px;gap:7px}
+  .team-opponent>img,.team-opponent>span{width:30px;height:30px;flex-basis:30px}
+  .team-opponent strong{font-size:11px}
+  .team-result-cell strong,.team-line-cell strong{font-size:11px}
+}

@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.2.5.11';
+const BUILD_VERSION = '2.3.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -149,7 +149,8 @@ const state = {
   pushingResults: false, pushResultsMessage: '',
   gradingReviews: {straight:{},parlays:{}},
   pickerOptions: ['Keef','Wilson','Both','Tail'],
-  historyChartKind: null
+  historyChartKind: null,
+  activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: ''
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -1289,7 +1290,7 @@ function render(){
   if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
   if(!cloudConfigured()){ app.innerHTML=renderCloudSetup(); bindAuth(); return; }
   if(!state.user){ app.innerHTML=renderAuth(); bindAuth(); return; }
-  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.historyChartKind?renderHistoryChart():''}`;
+  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.historyChartKind?renderHistoryChart():''}${state.activeTeamId?renderTeamScreen():''}`;
   bind();
 }
 
@@ -1583,6 +1584,103 @@ function renderPickerSelector(){
   </div>`;
 }
 
+function teamScreenResultFor(g,teamId){
+  if(!g.game_completed)return '';
+  const isAway=String(g.away_team_id)===String(teamId);
+  const teamScore=Number(isAway?g.away_score:g.home_score);
+  const oppScore=Number(isAway?g.home_score:g.away_score);
+  if(!Number.isFinite(teamScore)||!Number.isFinite(oppScore))return '';
+  return teamScore>oppScore?'W':teamScore<oppScore?'L':'T';
+}
+function teamScreenAtsFor(g,teamId){
+  return String(g.away_team_id)===String(teamId)?(g.away_ats_result||''):(g.home_ats_result||'');
+}
+function teamScreenLineFor(g,teamId){
+  if(g.closing_spread==null||!g.closing_spread_team_id)return null;
+  const n=Number(g.closing_spread);
+  if(!Number.isFinite(n))return null;
+  return String(g.closing_spread_team_id)===String(teamId)?n:-n;
+}
+function teamScreenRecord(teamId){
+  let wins=0,losses=0,ties=0,atsWins=0,atsLosses=0,atsPushes=0;
+  for(const g of state.teamScreenGames||[]){
+    const r=teamScreenResultFor(g,teamId);
+    if(r==='W')wins++;else if(r==='L')losses++;else if(r==='T')ties++;
+    const a=teamScreenAtsFor(g,teamId);
+    if(a==='Win')atsWins++;else if(a==='Loss')atsLosses++;else if(a==='Push')atsPushes++;
+  }
+  return {wins,losses,ties,atsWins,atsLosses,atsPushes};
+}
+function renderTeamScreen(){
+  const teamId=String(state.activeTeamId||'');
+  const meta=state.cfbTeams.find(t=>String(t.espnTeamId)===teamId)||teamMetaFor(state.activeTeamName);
+  const teamName=meta?.espnName||state.activeTeamName||'Team';
+  const display=teamDisplayParts(teamName);
+  const logo=meta?.logoUrl
+    ? `<img class="team-page-logo" src="${escapeAttr(meta.logoUrl)}" alt="${escapeAttr(teamName)} logo">`
+    : `<div class="team-page-logo team-page-logo-fallback">${escapeAttr(meta?.abbreviation||teamMonogram(teamName))}</div>`;
+  const rec=teamScreenRecord(teamId);
+  const overall=rec.ties?`${rec.wins}-${rec.losses}-${rec.ties}`:`${rec.wins}-${rec.losses}`;
+  const ats=rec.atsPushes?`${rec.atsWins}-${rec.atsLosses}-${rec.atsPushes}`:`${rec.atsWins}-${rec.atsLosses}`;
+  const games=[...(state.teamScreenGames||[])].sort((a,b)=>new Date(a.commence_time)-new Date(b.commence_time));
+  let body='';
+  if(state.teamScreenLoading)body='<div class="team-page-loading">Loading 2026 schedule…</div>';
+  else if(state.teamScreenError)body=`<div class="empty compact-empty">${escapeAttr(state.teamScreenError)}</div>`;
+  else if(!games.length)body='<div class="empty compact-empty">No 2026 games found for this team.</div>';
+  else body=`<div class="team-schedule-list">${games.map(g=>{
+    const isAway=String(g.away_team_id)===teamId;
+    const opponent=isAway?g.home_team_name:g.away_team_name;
+    const opponentId=isAway?g.home_team_id:g.away_team_id;
+    const opponentMeta=state.cfbTeams.find(t=>String(t.espnTeamId)===String(opponentId));
+    const date=new Date(g.commence_time);
+    const dateLabel=Number.isNaN(date.getTime())?'TBD':new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(date);
+    const result=teamScreenResultFor(g,teamId);
+    const teamScore=isAway?g.away_score:g.home_score;
+    const oppScore=isAway?g.home_score:g.away_score;
+    const score=g.game_completed&&teamScore!=null&&oppScore!=null?`${teamScore}-${oppScore}`:'—';
+    const atsResult=teamScreenAtsFor(g,teamId);
+    const line=teamScreenLineFor(g,teamId);
+    const lineText=line==null?'—':signed(line);
+    const totalText=g.closing_total==null?'—':String(Number(g.closing_total));
+    const oppLogo=opponentMeta?.logoUrl?`<img src="${escapeAttr(opponentMeta.logoUrl)}" alt="">`:`<span>${escapeAttr(opponentMeta?.abbreviation||teamMonogram(opponent))}</span>`;
+    return `<div class="team-schedule-row ${g.game_completed?'completed':'upcoming'}">
+      <div class="team-week-date"><strong>W${g.week}</strong><span>${escapeAttr(dateLabel)}</span></div>
+      <div class="team-opponent">${oppLogo}<div><strong>${isAway?'@ ':''}${escapeAttr(opponent)}</strong><span>${isAway?'Away':'Home'}</span></div></div>
+      <div class="team-result-cell">${result?`<strong class="team-result-${result.toLowerCase()}">${result} ${score}</strong>`:'<strong>Upcoming</strong>'}<span>${g.game_completed?(atsResult?`${atsResult} ATS`:'ATS —'):(formatKickoff(g.commence_time).time||'')}</span></div>
+      <div class="team-line-cell"><strong>${lineText}</strong><span>O/U ${totalText}</span></div>
+    </div>`;
+  }).join('')}</div>`;
+  return `<div class="overlay team-page-overlay">
+    <section class="sheet team-page-sheet">
+      <div class="sheet-handle"></div>
+      <div class="team-page-top"><button class="team-back-btn" data-close-team aria-label="Back">‹</button><div class="team-page-title">2026 Team</div><span class="team-page-top-spacer"></span></div>
+      <section class="team-page-hero">${logo}<div class="team-page-name"><h2>${escapeAttr(display.school||teamName)}</h2><div>${escapeAttr(display.nickname||'')}</div><span>${escapeAttr(meta?.conference||'')}</span></div></section>
+      <div class="team-record-grid"><div><strong>${overall}</strong><span>Overall</span></div><div><strong>${ats}</strong><span>ATS</span></div></div>
+      <div class="team-schedule-heading"><strong>2026 Schedule</strong><span>Closing line · result · ATS</span></div>
+      ${body}
+    </section>
+  </div>`;
+}
+async function openTeamScreen(teamName){
+  const meta=teamMetaFor(teamName);
+  if(!meta?.espnTeamId){alert('Team profile data is unavailable for this team.');return;}
+  state.activeTeamId=String(meta.espnTeamId);
+  state.activeTeamName=meta.espnName||teamName;
+  state.teamScreenGames=[];
+  state.teamScreenError='';
+  state.teamScreenLoading=true;
+  render();
+  const {data,error}=await state.sb.from('team_season_games')
+    .select('id,season,week,espn_event_id,commence_time,away_team_id,away_team_name,home_team_id,home_team_name,away_score,home_score,game_completed,game_status,venue_name,tv_network,closing_spread_team_id,closing_spread_team_name,closing_spread,closing_total,closing_source,away_ats_result,home_ats_result,total_result')
+    .eq('season',2026)
+    .or(`away_team_id.eq.${meta.espnTeamId},home_team_id.eq.${meta.espnTeamId}`)
+    .order('commence_time',{ascending:true});
+  state.teamScreenLoading=false;
+  if(error)state.teamScreenError=`Could not load team schedule: ${error.message}`;
+  else state.teamScreenGames=data||[];
+  render();
+}
+
 function renderGameSheet(){
   const g=gameById(state.activeGameId);
   if(!g)return'';
@@ -1615,7 +1713,7 @@ function renderGameSheet(){
 
       <section class="matchup-hero reference-hero">
         <div class="matchup-team">
-          ${renderTeamLogo(g.away)}
+          <button type="button" class="matchup-logo-button" data-open-team="${escapeAttr(g.away)}" aria-label="Open ${escapeAttr(g.away)} team page">${renderTeamLogo(g.away)}</button>
           <div class="matchup-team-name">${escapeAttr(g.away)}</div>
           <div class="matchup-team-role">Away</div>
         </div>
@@ -1623,7 +1721,7 @@ function renderGameSheet(){
         <div class="matchup-center reference-at"><div class="matchup-at">@</div></div>
 
         <div class="matchup-team">
-          ${renderTeamLogo(g.home)}
+          <button type="button" class="matchup-logo-button" data-open-team="${escapeAttr(g.home)}" aria-label="Open ${escapeAttr(g.home)} team page">${renderTeamLogo(g.home)}</button>
           <div class="matchup-team-name">${escapeAttr(g.home)}</div>
           <div class="matchup-team-role">Home</div>
         </div>
@@ -1910,6 +2008,8 @@ function bind(){
   document.querySelectorAll('[data-slate-division]').forEach(el=>el.onclick=()=>{state.slateDivision=el.dataset.slateDivision;if(state.slateDivision==='FBS'&&!['All','SEC','Big Ten','Big 12','ACC','G6'].includes(state.slateConference))state.slateConference='All';render();});
   document.querySelectorAll('[data-slate-conference]').forEach(el=>el.onclick=()=>{state.slateConference=el.dataset.slateConference;state.slateDivision='FBS';render();});
   document.querySelectorAll('[data-game],[data-open-game]').forEach(el=>el.onclick=()=>{state.activeGameId=el.dataset.game||el.dataset.openGame;state.editWagerId=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
+  document.querySelectorAll('[data-open-team]').forEach(el=>el.onclick=(event)=>{event.preventDefault();event.stopPropagation();openTeamScreen(el.dataset.openTeam);});
+  document.querySelectorAll('[data-close-team]').forEach(el=>el.onclick=()=>{state.activeTeamId=null;state.activeTeamName='';state.teamScreenGames=[];state.teamScreenLoading=false;state.teamScreenError='';render();});
   document.querySelectorAll('[data-close]').forEach(el=>el.onclick=()=>{state.activeGameId=null;state.editWagerId=null;state.historyChartKind=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
   document.querySelectorAll('[data-open-history]').forEach(el=>el.onclick=()=>{captureWagerDraft();state.historyChartKind=el.dataset.openHistory;render();});
   document.querySelectorAll('[data-close-history]').forEach(el=>el.onclick=()=>{state.historyChartKind=null;render();});
