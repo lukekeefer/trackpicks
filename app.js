@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.12';
+const BUILD_VERSION = '2.5.4.13';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1697,7 +1697,14 @@ function parseExplicitMarketSportsbook(rawText,standardUnitSize,sportsbook){
   }
   const out=[];
   for(let a=0;a<anchors.length;a++){
-    const anchor=anchors[a], end=anchors[a+1]?.index??lines.length;
+    const anchor=anchors[a];
+    let end=anchors[a+1]?.index??lines.length;
+    if(sportsbook==='DraftKings'){
+      // 2.5.4.13: a repeated DraftKings crown/header is a hard ticket boundary even
+      // when OCR damages the next market anchor. Never borrow money/score text from it.
+      const nextBrand=lines.findIndex((line,idx)=>idx>anchor.marketIndex && /DRAFTKINGS|ORAFTKINGS|THE CROWN IS YOURS/i.test(line));
+      if(nextBrand>anchor.marketIndex&&nextBrand<end)end=nextBrand;
+    }
     const meta=findSportsbookEventAndMoney(lines,anchor.marketIndex+1,end);
     // 2.5.4.11.1: FanDuel OCR commonly drops the decimal in payout values ($46.74 -> $4674).
     // Repair only an implausibly large payout from an explicit FanDuel wager block.
@@ -2071,7 +2078,7 @@ function normalizeCandidateAgainstKnownGames(candidate){
   // 2.5.4.12 DraftKings settled-card fallback: the Final scoreboard often contains
   // both teams even when DK omits the normal event row. Use those two recognized
   // teams to reconstruct the matchup; the TrackPicks schedule remains authoritative.
-  if(candidate.sportsbook==='DraftKings' && !extractImportMatchupPair(candidate.eventText||'') && /Final/i.test(candidate.contextText||'')){
+  if(candidate.sportsbook==='DraftKings' && !extractImportMatchupPair(candidate.eventText||'') && /\bFinal\b/i.test(candidate.contextText||'')){
     const scoreClues=extractImportTeamClues(candidate.contextText||'');
     const keys=new Set(scoreClues.slice(0,8).map(x=>normalizeTeamName(x.team)));
     const targetWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
@@ -2079,6 +2086,40 @@ function normalizeCandidateAgainstKnownGames(candidate){
     if(possible.length===1)candidate.eventText=`${possible[0].away} @ ${possible[0].home}`;
   }
   return candidate;
+}
+
+// 2.5.4.13: collapsed/compact rows do not contain an opponent. A confidently
+// parsed wager timestamp is therefore a one-way week guardrail: a wager cannot be
+// assigned to a week whose entire slate occurred before the wager was placed.
+// The timestamp never proves a later week; normal game matching still does that.
+function compactTimestampAllowsWeek(candidate,week){
+  if(candidate?.layoutType!=='compact'||!candidate.placedAt)return true;
+  const placed=new Date(candidate.placedAt);
+  if(Number.isNaN(placed.getTime()))return true; // unreadable timestamp: preserve legacy behavior
+  const games=weekGames(Number(week)).filter(g=>g.commenceTime&&!Number.isNaN(new Date(g.commenceTime).getTime()));
+  if(!games.length)return true;
+  const latestKickoff=Math.max(...games.map(g=>new Date(g.commenceTime).getTime()));
+  return placed.getTime()<=latestKickoff;
+}
+
+function canonicalMatchedSelection(candidate,game,fallback=null){
+  if(candidate?.betType==='Total')return candidate.selection;
+  if(fallback)return fallback;
+  const evidence=[candidate?.rawSelection,candidate?.selection].filter(Boolean).join(' ');
+  const away=importTeamTextScore(evidence,game.away),home=importTeamTextScore(evidence,game.home);
+  if(away>=78||home>=78)return away>=home?game.away:game.home;
+  // OCR can prefix the selected team with logo/rank junk ("C 2 Missouri"). Once
+  // the game is known, only its two teams are legal answers; known-team clues are
+  // used solely to choose between those two canonical TrackPicks identities.
+  const clues=extractImportTeamClues(evidence);
+  const awayKey=normalizeTeamName(resolveEspnTeamName(game.away)||game.away);
+  const homeKey=normalizeTeamName(resolveEspnTeamName(game.home)||game.home);
+  for(const clue of clues){
+    const key=normalizeTeamName(resolveEspnTeamName(clue.team)||clue.team);
+    if(key===awayKey)return game.away;
+    if(key===homeKey)return game.home;
+  }
+  return null;
 }
 
 function finalizeScreenshotCandidateReadiness(candidate){
@@ -2108,25 +2149,30 @@ function finalizeScreenshotCandidateReadiness(candidate){
 function matchScreenshotCandidateToWeek(candidate,week){
   candidate=normalizeCandidateAgainstKnownGames(candidate);
   const activeWeek=Number(week);
+  if(!compactTimestampAllowsWeek(candidate,activeWeek)){
+    candidate.matchedGameId=null;candidate.matchedWeek=null;
+    candidate.matchedAway='';candidate.matchedHome='';candidate.matchedSelection='';
+    candidate.detectedWeek=null;
+    candidate.matchStatus='wrong-week';
+    candidate.reviewState=`Not in Week ${activeWeek}`;
+    candidate.timestampWeekRejected=true;
+    return finalizeScreenshotCandidateReadiness(candidate);
+  }
+  candidate.timestampWeekRejected=false;
   const inWeek=bestImportGameMatch(candidate,weekGames(activeWeek));
   if(inWeek){
     candidate.matchedGameId=inWeek.game.id;
     candidate.matchedWeek=activeWeek;
     candidate.matchedAway=inWeek.game.away;
     candidate.matchedHome=inWeek.game.home;
-    candidate.matchedSelection=inWeek.selectionTeam||candidate.selection;
-    // 2.5.4.11.1: the matched game is authoritative for team naming. Strip OCR/logo
-    // garbage such as "C 2 Missouri" instead of displaying it as the selection.
-    if(candidate.betType!=='Total' && inWeek.selectionTeam) candidate.selection=inWeek.selectionTeam;
+    const canonicalSelection=canonicalMatchedSelection(candidate,inWeek.game,inWeek.selectionTeam);
+    candidate.matchedSelection=candidate.betType==='Total'?candidate.selection:(canonicalSelection||candidate.selection);
+    // 2.5.4.13: after a confident game match, TrackPicks owns team identity.
+    // Dirty OCR is evidence for matching, never the displayed team name.
+    if(candidate.betType!=='Total' && canonicalSelection) candidate.selection=canonicalSelection;
     candidate.reviewState=`Matched Week ${activeWeek}`;
     candidate.matchStatus='matched';
-    // Once a game is matched, canonical game identity outranks dirty OCR prefixes.
-    if(candidate.betType!=='Total'){
-      const a=importTeamTextScore(candidate.rawSelection||candidate.selection||'',inWeek.game.away);
-      const h=importTeamTextScore(candidate.rawSelection||candidate.selection||'',inWeek.game.home);
-      if(a>=78||h>=78)candidate.selection=a>=h?inWeek.game.away:inWeek.game.home;
-    }
-    candidate.matchedSelection=candidate.betType==='Total'?candidate.selection:candidate.selection;
+    candidate.matchedSelection=candidate.betType==='Total'?candidate.selection:(canonicalSelection||candidate.selection);
     return finalizeScreenshotCandidateReadiness(candidate);
   }
   const outside=bestImportGameMatch(candidate,state.games.filter(g=>Number(g.week)!==activeWeek));
