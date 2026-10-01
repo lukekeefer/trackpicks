@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.14';
+const BUILD_VERSION = '2.5.4.15';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1688,9 +1688,9 @@ function parseExplicitMarketSportsbook(rawText,standardUnitSize,sportsbook){
     let market=null;
     // FanDuel icons/rank glyphs can OCR as a tiny prefix (e.g. "S MONEYLINE").
     // The market word at the END of the line is authoritative; the short prefix is disposable UI noise.
-    if(/^(?:(?:[A-Z0-9]{1,2})\s+)?(?:SPREAD|gpread)$/i.test(normalized))market='Spread';
-    else if(/^(?:(?:[A-Z0-9]{1,2})\s+)?(?:MONEYLINE|MONEY LINE)$/i.test(normalized))market='Moneyline';
-    else if(/^(?:(?:[A-Z0-9]{1,2})\s+)?TOTAL$/i.test(normalized))market='Total';
+    if(/\b(?:SPREAD|gpread)\b/i.test(normalized))market='Spread';
+    else if(/\b(?:MONEYLINE|MONEY LINE)\b/i.test(normalized))market='Moneyline';
+    else if(/\bTOTAL\b/i.test(normalized))market='Total';
     if(!market)continue;
     const header=parseMarketHeaderNear(lines,i,market);
     if(header)anchors.push({...header,market,marketIndex:i});
@@ -2051,6 +2051,51 @@ function bestImportGameMatch(candidate,games){
   return confident?best:null;
 }
 
+function canonicalImportSelectionForMatchedGame(candidate,game){
+  if(!candidate||!game||candidate.betType==='Total')return candidate?.selection||'';
+  const source=[candidate.rawSelection,candidate.selection].filter(Boolean).join(' ');
+  const awayScore=importTeamTextScore(source,game.away);
+  const homeScore=importTeamTextScore(source,game.home);
+  if(awayScore>=60||homeScore>=60)return awayScore>=homeScore?game.away:game.home;
+
+  // If OCR polluted the wager header (for example "C 2 Missouri"), use the
+  // explicit matchup side as a second deterministic bridge to the canonical game.
+  const pair=extractImportMatchupPair(candidate.eventText||'');
+  if(pair){
+    const raw=normalizeImportTeamText(source);
+    const a=normalizeImportTeamText(pair.away),h=normalizeImportTeamText(pair.home);
+    if(a && (raw.includes(a)||a.includes(raw)))return game.away;
+    if(h && (raw.includes(h)||h.includes(raw)))return game.home;
+  }
+  return '';
+}
+
+function recoverDraftKingsSettledMatchup(candidate){
+  if(!candidate||candidate.sportsbook!=='DraftKings')return null;
+  const context=String(candidate.contextText||'');
+  const finalAt=context.search(/\bFinal\b/i);
+  if(finalAt<0)return null;
+  // Only scoreboard text from this wager card is matchup evidence. Stop before
+  // Share/Bet ID/the next DK card so adjacent tickets cannot contaminate it.
+  let scoreboard=context.slice(finalAt);
+  const stop=scoreboard.search(/\n\s*(?:<?\s*Share\b|Bet\s*(?:Bet\s*)?ID\b|DRAFTKINGS\b|ORAFTKINGS\b)/i);
+  if(stop>0)scoreboard=scoreboard.slice(0,stop);
+  const week=Number(state.screenshotImportWeek ?? state.selectedWeek);
+  const pools=[weekGames(week),state.games.filter(g=>Number(g.week)!==week)];
+  for(const games of pools){
+    const hits=[];
+    for(const game of games){
+      const a=importTeamTextScore(scoreboard,game.away),h=importTeamTextScore(scoreboard,game.home);
+      const sa=importTeamTextScore(candidate.rawSelection||candidate.selection||'',game.away);
+      const sh=importTeamTextScore(candidate.rawSelection||candidate.selection||'',game.home);
+      if(a>=88&&h>=88&&Math.max(sa,sh)>=60)hits.push({game,score:a+h+Math.max(sa,sh),selectionTeam:sa>=sh?game.away:game.home});
+    }
+    hits.sort((x,y)=>y.score-x.score);
+    if(hits.length===1 || (hits.length>1&&hits[0].score-hits[1].score>=12))return hits[0];
+  }
+  return null;
+}
+
 function normalizeCandidateAgainstKnownGames(candidate){
   if(!candidate)return candidate;
   const evidence=[candidate.selection,candidate.eventText,candidate.contextText].filter(Boolean).join('\n');
@@ -2068,15 +2113,15 @@ function normalizeCandidateAgainstKnownGames(candidate){
     if(possible.length!==1) possible=state.games.filter(g=>keys.has(normalizeTeamName(resolveEspnTeamName(g.away)||g.away))&&keys.has(normalizeTeamName(resolveEspnTeamName(g.home)||g.home)));
     if(possible.length===1) candidate.eventText=`${possible[0].away} @ ${possible[0].home}`;
   }
-  // 2.5.4.14 DraftKings settled-card fallback: the Final scoreboard often contains
-  // both teams even when DK omits the normal event row. Use those two recognized
-  // teams to reconstruct the matchup; the TrackPicks schedule remains authoritative.
-  if(candidate.sportsbook==='DraftKings' && !extractImportMatchupPair(candidate.eventText||'') && /\bFinal\b/i.test(candidate.contextText||'')){
-    const scoreClues=extractImportTeamClues(candidate.contextText||'');
-    const keys=new Set(scoreClues.slice(0,8).map(x=>normalizeTeamName(x.team)));
-    const targetWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
-    const possible=state.games.filter(g=>Number(g.week)===targetWeek&&keys.has(normalizeTeamName(resolveEspnTeamName(g.away)||g.away))&&keys.has(normalizeTeamName(resolveEspnTeamName(g.home)||g.home)));
-    if(possible.length===1)candidate.eventText=`${possible[0].away} @ ${possible[0].home}`;
+  // 2.5.4.15: DK settled tickets often omit a normal matchup row. Bind the
+  // Final scoreboard to THIS wager card, then score both scoreboard teams against
+  // TrackPicks games. This avoids exact-name brittleness and adjacent-card leakage.
+  if(candidate.sportsbook==='DraftKings' && !extractImportMatchupPair(candidate.eventText||'')){
+    const recovered=recoverDraftKingsSettledMatchup(candidate);
+    if(recovered){
+      candidate.eventText=`${recovered.game.away} @ ${recovered.game.home}`;
+      candidate.dkRecoveredSelection=recovered.selectionTeam;
+    }
   }
   return candidate;
 }
@@ -2084,7 +2129,7 @@ function normalizeCandidateAgainstKnownGames(candidate){
 function finalizeScreenshotCandidateReadiness(candidate){
   if(!candidate)return candidate;
   const missing=[];
-  if(candidate.matchStatus!=='matched')missing.push('matchup');
+  if(candidate.matchStatus!=='matched'&&candidate.matchStatus!=='wrong-week')missing.push('matchup');
   if(candidate.betType==='Spread'){
     if(!candidate.selection)missing.push('pick selection');
     if(candidate.line==null||!Number.isFinite(Number(candidate.line)))missing.push('actual line taken');
@@ -2132,19 +2177,11 @@ function matchScreenshotCandidateToWeek(candidate,week){
     candidate.matchedWeek=activeWeek;
     candidate.matchedAway=inWeek.game.away;
     candidate.matchedHome=inWeek.game.home;
-    candidate.matchedSelection=inWeek.selectionTeam||candidate.selection;
-    // 2.5.4.11.1: the matched game is authoritative for team naming. Strip OCR/logo
-    // garbage such as "C 2 Missouri" instead of displaying it as the selection.
-    if(candidate.betType!=='Total' && inWeek.selectionTeam) candidate.selection=inWeek.selectionTeam;
+    const canonicalSelected=candidate.betType==='Total'?candidate.selection:(inWeek.selectionTeam||candidate.dkRecoveredSelection||canonicalImportSelectionForMatchedGame(candidate,inWeek.game));
+    if(candidate.betType!=='Total'&&canonicalSelected)candidate.selection=canonicalSelected;
+    candidate.matchedSelection=canonicalSelected||candidate.selection;
     candidate.reviewState=`Matched Week ${activeWeek}`;
     candidate.matchStatus='matched';
-    // Once a game is matched, canonical game identity outranks dirty OCR prefixes.
-    if(candidate.betType!=='Total'){
-      const a=importTeamTextScore(candidate.rawSelection||candidate.selection||'',inWeek.game.away);
-      const h=importTeamTextScore(candidate.rawSelection||candidate.selection||'',inWeek.game.home);
-      if(a>=78||h>=78)candidate.selection=a>=h?inWeek.game.away:inWeek.game.home;
-    }
-    candidate.matchedSelection=candidate.betType==='Total'?candidate.selection:candidate.selection;
     return finalizeScreenshotCandidateReadiness(candidate);
   }
   const outside=bestImportGameMatch(candidate,state.games.filter(g=>Number(g.week)!==activeWeek));
@@ -2161,12 +2198,7 @@ function matchScreenshotCandidateToWeek(candidate,week){
     candidate.matchedHome=outside.game.home;
     if(candidate.betType==='Total')candidate.matchedSelection=candidate.selection;
     else{
-      let selected=outside.selectionTeam||null;
-      if(!selected){
-        const a=importTeamTextScore(candidate.rawSelection||candidate.selection||'',outside.game.away);
-        const h=importTeamTextScore(candidate.rawSelection||candidate.selection||'',outside.game.home);
-        if(a>=60||h>=60)selected=a>=h?outside.game.away:outside.game.home;
-      }
+      const selected=outside.selectionTeam||candidate.dkRecoveredSelection||canonicalImportSelectionForMatchedGame(candidate,outside.game);
       if(selected){candidate.selection=selected;candidate.matchedSelection=selected;}
     }
   }else{
