@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.15';
+const BUILD_VERSION = '2.5.4.16';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -2075,27 +2075,48 @@ function recoverDraftKingsSettledMatchup(candidate){
   const context=String(candidate.contextText||'');
   const finalAt=context.search(/\bFinal\b/i);
   if(finalAt<0)return null;
-  // Only scoreboard text from this wager card is matchup evidence. Stop before
-  // Share/Bet ID/the next DK card so adjacent tickets cannot contaminate it.
+
+  // 2.5.4.16: a settled DK card has a deterministic scoreboard container:
+  // everything after "Final Q1 Q2 Q3 Q4 T" and before "Share" belongs to
+  // THIS ticket. Treat that block as matchup identity before using any broader
+  // card context. This is intentionally independent of a normal "A @ B" row,
+  // because settled DK cards frequently do not show one.
   let scoreboard=context.slice(finalAt);
-  const stop=scoreboard.search(/\n\s*(?:<?\s*Share\b|Bet\s*(?:Bet\s*)?ID\b|DRAFTKINGS\b|ORAFTKINGS\b)/i);
-  if(stop>0)scoreboard=scoreboard.slice(0,stop);
-  const week=Number(state.screenshotImportWeek ?? state.selectedWeek);
-  const pools=[weekGames(week),state.games.filter(g=>Number(g.week)!==week)];
-  for(const games of pools){
-    const hits=[];
-    for(const game of games){
-      const a=importTeamTextScore(scoreboard,game.away),h=importTeamTextScore(scoreboard,game.home);
-      const sa=importTeamTextScore(candidate.rawSelection||candidate.selection||'',game.away);
-      const sh=importTeamTextScore(candidate.rawSelection||candidate.selection||'',game.home);
-      if(a>=88&&h>=88&&Math.max(sa,sh)>=60)hits.push({game,score:a+h+Math.max(sa,sh),selectionTeam:sa>=sh?game.away:game.home});
-    }
-    hits.sort((x,y)=>y.score-x.score);
-    if(hits.length===1 || (hits.length>1&&hits[0].score-hits[1].score>=12))return hits[0];
+  const shareAt=scoreboard.search(/\n\s*<?\s*Share\b/i);
+  if(shareAt>0)scoreboard=scoreboard.slice(0,shareAt);
+  else{
+    // Fallback boundary if OCR loses Share. Never cross into ticket metadata or
+    // the next DraftKings card.
+    const stop=scoreboard.search(/\n\s*(?:Bet\s*(?:Bet\s*)?ID\b|DRAFTKINGS\b|ORAFTKINGS\b)/i);
+    if(stop>0)scoreboard=scoreboard.slice(0,stop);
   }
+
+  // Score each known game ONLY against the Final->Share scoreboard. Requiring
+  // both teams prevents a selected-team-only false positive. Selection identity
+  // is scored separately so OCR such as "a Oregon -3" still canonicalizes to
+  // the TrackPicks team name after the game is recovered.
+  const selectedText=String(candidate.rawSelection||candidate.selection||'');
+  const hits=[];
+  for(const game of (state.games||[])){
+    const awayScore=importTeamTextScore(scoreboard,game.away);
+    const homeScore=importTeamTextScore(scoreboard,game.home);
+    if(awayScore<88||homeScore<88)continue;
+    const selAway=importTeamTextScore(selectedText,game.away);
+    const selHome=importTeamTextScore(selectedText,game.home);
+    const selectionScore=Math.max(selAway,selHome);
+    if(candidate.betType!=='Total'&&selectionScore<60)continue;
+    hits.push({
+      game,
+      score:awayScore+homeScore+selectionScore,
+      selectionTeam:candidate.betType==='Total'?null:(selAway>=selHome?game.away:game.home),
+      scoreboardText:scoreboard
+    });
+  }
+  hits.sort((a,b)=>b.score-a.score);
+  if(!hits.length)return null;
+  if(hits.length===1||hits[0].score-hits[1].score>=12)return hits[0];
   return null;
 }
-
 function normalizeCandidateAgainstKnownGames(candidate){
   if(!candidate)return candidate;
   const evidence=[candidate.selection,candidate.eventText,candidate.contextText].filter(Boolean).join('\n');
@@ -2113,9 +2134,8 @@ function normalizeCandidateAgainstKnownGames(candidate){
     if(possible.length!==1) possible=state.games.filter(g=>keys.has(normalizeTeamName(resolveEspnTeamName(g.away)||g.away))&&keys.has(normalizeTeamName(resolveEspnTeamName(g.home)||g.home)));
     if(possible.length===1) candidate.eventText=`${possible[0].away} @ ${possible[0].home}`;
   }
-  // 2.5.4.15: DK settled tickets often omit a normal matchup row. Bind the
-  // Final scoreboard to THIS wager card, then score both scoreboard teams against
-  // TrackPicks games. This avoids exact-name brittleness and adjacent-card leakage.
+  // 2.5.4.16: DK settled tickets often omit a normal matchup row. The Final->Share
+  // scoreboard is the authoritative matchup container for THIS wager card.
   if(candidate.sportsbook==='DraftKings' && !extractImportMatchupPair(candidate.eventText||'')){
     const recovered=recoverDraftKingsSettledMatchup(candidate);
     if(recovered){
