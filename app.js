@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.11.1';
+const BUILD_VERSION = '2.5.4.12';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1722,6 +1722,41 @@ function parseExplicitMarketSportsbook(rawText,standardUnitSize,sportsbook){
   return out;
 }
 
+function recoverMatchupFirstCandidates(rawText,standardUnitSize,sportsbook){
+  // 2.5.4.12: MATCHUP + WAGER SELECTION is the minimum viable pick.
+  // Start from an explicit sportsbook event row and recover the selection/market
+  // around it. Payout odds and units are validation fields, never candidate gates.
+  const text=normalizeOcrBetText(rawText),lines=text.split('\n'),out=[];
+  for(let eventIndex=0;eventIndex<lines.length;eventIndex++){
+    const pair=extractImportMatchupPair(lines[eventIndex]);
+    if(!pair)continue;
+    const eventClues=extractImportTeamClues(`${pair.away} @ ${pair.home}`);
+    if(eventClues.length<2)continue;
+    let marketIndex=-1,market='';
+    for(let i=Math.max(0,eventIndex-6);i<eventIndex;i++){
+      const n=String(lines[i]||'').replace(/^[^A-Za-z]+/,'').trim();
+      if(/^(?:(?:[A-Z0-9]{1,2})\s+)?(?:SPREAD|gpread)$/i.test(n)){marketIndex=i;market='Spread';}
+      else if(/^(?:(?:[A-Z0-9]{1,2})\s+)?(?:MONEYLINE|MONEY LINE)$/i.test(n)){marketIndex=i;market='Moneyline';}
+      else if(/^(?:(?:[A-Z0-9]{1,2})\s+)?TOTAL$/i.test(n)){marketIndex=i;market='Total';}
+    }
+    if(marketIndex<0)continue;
+    const header=parseMarketHeaderNear(lines,marketIndex,market);
+    if(!header)continue; // matchup exists, but no wager selection => No Pick Detected upstream.
+    const nextBoundary=lines.findIndex((line,idx)=>idx>eventIndex && /\bBET ID\b/i.test(line));
+    const end=nextBoundary>eventIndex?nextBoundary:Math.min(lines.length,eventIndex+12);
+    const meta=findSportsbookEventAndMoney(lines,marketIndex+1,end);
+    const context=lines.slice(Math.max(0,header.index),end).join('\n');
+    const candidate=buildSportsbookCandidate({sportsbook,selection:header.selection,betType:market,line:header.line,odds:header.odds,
+      stakeUsd:meta.stake,possibleWinningsUsd:meta.payout,eventText:lines[eventIndex],contextText:context,standardUnitSize,status:meta.status});
+    candidate.rawOddsToken=header.rawOddsToken||'';
+    candidate.oddsNeedsReview=!!header.oddsNeedsReview;
+    candidate.repairNotes=[];
+    if(header.oddsNeedsReview)candidate.repairNotes.push(`Payout odds sign unreadable (${header.rawOddsToken}); review required`);
+    out.push(candidate);
+  }
+  return out;
+}
+
 function parseScreenshotCandidates(rawText,standardUnitSize,layoutHint='card'){
   if(layoutHint==='compact'){
     const compact=parseCompactScreenshotCandidates(rawText,standardUnitSize);
@@ -1733,8 +1768,14 @@ function parseScreenshotCandidates(rawText,standardUnitSize,layoutHint='card'){
   // 2.5.4.10: explicit sportsbook parsers own their card grammar. Candidate
   // discovery happens before game matching and survives imperfect secondary fields.
   if(sportsbook==='FanDuel'||sportsbook==='DraftKings'){
+    const matchupFirst=recoverMatchupFirstCandidates(text,standardUnitSize,sportsbook);
     const specific=parseExplicitMarketSportsbook(text,standardUnitSize,sportsbook);
-    if(specific.length)return specific;
+    const merged=[...matchupFirst];
+    for(const c of specific){
+      const duplicate=merged.some(x=>x.betType===c.betType && normalizeTeamName(x.selection)===normalizeTeamName(c.selection) && Number(x.line??9999)===Number(c.line??9999));
+      if(!duplicate)merged.push(c);
+    }
+    if(merged.length)return merged;
   }else if(sportsbook==='Sportsbook'){
     // 2.5.4.10: cropped FanDuel/DraftKings screenshots can lose the brand header while
     // retaining explicit SPREAD/MONEYLINE blocks. Parse that grammar before falling
@@ -2021,9 +2062,21 @@ function normalizeCandidateAgainstKnownGames(candidate){
   }
   // Recover a clean event from any two-team context inside the same wager card.
   if((!candidate.eventText || extractImportTeamClues(candidate.eventText).length<2) && clues.length>=2){
-    const keys=new Set(clues.slice(0,4).map(x=>normalizeTeamName(x.team)));
-    const possible=state.games.filter(g=>keys.has(normalizeTeamName(resolveEspnTeamName(g.away)||g.away))&&keys.has(normalizeTeamName(resolveEspnTeamName(g.home)||g.home)));
+    const keys=new Set(clues.slice(0,6).map(x=>normalizeTeamName(x.team)));
+    const targetWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
+    let possible=state.games.filter(g=>Number(g.week)===targetWeek&&keys.has(normalizeTeamName(resolveEspnTeamName(g.away)||g.away))&&keys.has(normalizeTeamName(resolveEspnTeamName(g.home)||g.home)));
+    if(possible.length!==1) possible=state.games.filter(g=>keys.has(normalizeTeamName(resolveEspnTeamName(g.away)||g.away))&&keys.has(normalizeTeamName(resolveEspnTeamName(g.home)||g.home)));
     if(possible.length===1) candidate.eventText=`${possible[0].away} @ ${possible[0].home}`;
+  }
+  // 2.5.4.12 DraftKings settled-card fallback: the Final scoreboard often contains
+  // both teams even when DK omits the normal event row. Use those two recognized
+  // teams to reconstruct the matchup; the TrackPicks schedule remains authoritative.
+  if(candidate.sportsbook==='DraftKings' && !extractImportMatchupPair(candidate.eventText||'') && /Final/i.test(candidate.contextText||'')){
+    const scoreClues=extractImportTeamClues(candidate.contextText||'');
+    const keys=new Set(scoreClues.slice(0,8).map(x=>normalizeTeamName(x.team)));
+    const targetWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
+    const possible=state.games.filter(g=>Number(g.week)===targetWeek&&keys.has(normalizeTeamName(resolveEspnTeamName(g.away)||g.away))&&keys.has(normalizeTeamName(resolveEspnTeamName(g.home)||g.home)));
+    if(possible.length===1)candidate.eventText=`${possible[0].away} @ ${possible[0].home}`;
   }
   return candidate;
 }
@@ -2044,7 +2097,9 @@ function finalizeScreenshotCandidateReadiness(candidate){
   if(candidate.odds==null||!Number.isFinite(Number(candidate.odds))||candidate.oddsNeedsReview)missing.push('actual payout odds');
   if(candidate.units==null||!Number.isFinite(Number(candidate.units))||Number(candidate.units)<=0)missing.push('units wagered');
   candidate.missingFields=[...new Set(missing)];
+  const missingIdentity=candidate.missingFields.some(x=>x==='matchup'||x==='pick selection'||x==='actual line taken'||x==='actual total taken');
   if(candidate.matchStatus==='wrong-week')candidate.reviewState=`Not in Week ${Number(state.screenshotImportWeek ?? state.selectedWeek)}`;
+  else if(missingIdentity)candidate.reviewState='No Pick Detected';
   else if(candidate.missingFields.length)candidate.reviewState='Needs review';
   else candidate.reviewState='Ready for Slip';
   return candidate;
@@ -2071,6 +2126,7 @@ function matchScreenshotCandidateToWeek(candidate,week){
       const h=importTeamTextScore(candidate.rawSelection||candidate.selection||'',inWeek.game.home);
       if(a>=78||h>=78)candidate.selection=a>=h?inWeek.game.away:inWeek.game.home;
     }
+    candidate.matchedSelection=candidate.betType==='Total'?candidate.selection:candidate.selection;
     return finalizeScreenshotCandidateReadiness(candidate);
   }
   const outside=bestImportGameMatch(candidate,state.games.filter(g=>Number(g.week)!==activeWeek));
@@ -2828,10 +2884,11 @@ function renderScreenshotImporter(){
       const oddsPart=c.odds==null?'':` · ${signed(c.odds)}`;
       const meta=[c.sportsbook,c.betType,c.status].filter(Boolean).join(' · ');
       const matchClass=c.matchStatus==='wrong-week'?'wrong-week':c.reviewState==='Ready for Slip'?'matched':'review';
+      const displaySelection=(c.matchStatus==='matched'&&c.matchedSelection)?c.matchedSelection:c.selection;
       const matchLine=c.matchStatus==='matched'?`<div class="parsed-bet-match"><strong>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</strong><span>Week ${importWeek} game matched</span></div>`:c.matchStatus==='wrong-week'?`<div class="parsed-bet-warning"><strong>Wrong week.</strong> This appears to be a Week ${Number(c.detectedWeek)} game. This batch can only accept Week ${importWeek} games.</div>`:'';
       return `<div class="parsed-bet-card">
         <div class="parsed-bet-head"><span>Bet ${cIndex+1}</span><span class="import-status-chip ${matchClass}">${escapeAttr(c.reviewState||'Needs review')}</span></div>
-        <strong class="parsed-bet-pick">${escapeAttr(c.selection)}${escapeAttr(linePart)}</strong>
+        <strong class="parsed-bet-pick">${escapeAttr(displaySelection)}${escapeAttr(linePart)}</strong>
         <div class="parsed-bet-meta">${escapeAttr(meta)}${escapeAttr(oddsPart)}</div>
         <div class="parsed-bet-stake">${escapeAttr(stake)}${c.possibleWinningsUsd!=null?`<span> · Possible winnings ${escapeAttr(formatUsd(c.possibleWinningsUsd))}</span>`:''}</div>
         ${c.layoutType==='compact'?'<div class="parsed-bet-event">Compact row detected</div>':''}
