@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.16.7';
+const BUILD_VERSION = '2.5.5';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -154,7 +154,7 @@ const state = {
   activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
   gameTeamStats: {}, gameTeamStatsLoading: false,
   standardUnitSize: null,
-  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null
+  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null, screenshotImportFlow: null
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -2529,7 +2529,7 @@ function render(){
   if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
   if(!cloudConfigured()){ app.innerHTML=renderCloudSetup(); bindAuth(); return; }
   if(!state.user){ app.innerHTML=renderAuth(); bindAuth(); return; }
-  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.historyChartKind?renderHistoryChart():''}${state.activeTeamId?renderTeamScreen():''}`;
+  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.screenshotImportFlow?renderScreenshotImportFlow():''}${state.historyChartKind?renderHistoryChart():''}${state.activeTeamId?renderTeamScreen():''}`;
   bind();
 }
 
@@ -3091,6 +3091,124 @@ function renderGameSheet(){
   </div>`;
 }
 
+
+
+// 2.5.5: reconcile all screenshot evidence before anything is offered to the Slip.
+function screenshotCandidateQuality(c){
+  if(!c)return 0;
+  return (c.matchStatus==='matched'?30:c.matchStatus==='wrong-week'?20:0)+(c.selection?8:0)+(Number.isFinite(Number(c.line))?5:0)+(Number.isFinite(Number(c.odds))&&!c.oddsNeedsReview?5:0)+(Number.isFinite(Number(c.units))&&Number(c.units)>0?5:0)+(c.eventText?4:0)+(c.sourceBetId?12:0);
+}
+function screenshotCandidateMergeKey(c){
+  if(c?.sourceBetId)return `id:${String(c.sourceBetId).toLowerCase()}`;
+  const sel=normalizeTeamName(c?.matchedSelection||c?.selection||'');
+  const game=c?.matchedGameId||`${normalizeTeamName(c?.matchedAway||'')}@${normalizeTeamName(c?.matchedHome||'')}`;
+  const line=Number.isFinite(Number(c?.line))?Number(c.line):'';
+  const stake=Number.isFinite(Number(c?.stakeUsd))?Number(c.stakeUsd):'';
+  return `fp:${c?.sportsbook||''}|${c?.betType||''}|${sel}|${game}|${line}|${stake}`.toLowerCase();
+}
+function mergeScreenshotCandidateEvidence(a,b){
+  const bWins=screenshotCandidateQuality(b)>screenshotCandidateQuality(a);
+  let best=bWins?{...b}:{...a};
+  const other=bWins?a:b;
+  const fill=['selection','line','odds','stakeUsd','possibleWinningsUsd','units','eventText','sourceBetId','placedAt','matchedGameId','matchedWeek','matchedAway','matchedHome','matchedSelection','detectedWeek','matchStatus'];
+  for(const k of fill){if((best[k]==null||best[k]==='')&&(other?.[k]!=null&&other[k]!==''))best[k]=other[k];}
+  best.repairNotes=[...new Set([...(a?.repairNotes||[]),...(b?.repairNotes||[])])];
+  best.reconciledCount=(a?.reconciledCount||1)+(b?.reconciledCount||1);
+  return finalizeScreenshotCandidateReadiness(best);
+}
+function reconcileScreenshotImportBatch(){
+  const all=state.screenshotImportFiles.flatMap((item,si)=>(item.candidates||[]).map(c=>({...c,sourceScreenshotIndex:si})));
+  const groups=[];
+  for(const c of all){
+    const exact=screenshotCandidateMergeKey(c);
+    let idx=groups.findIndex(g=>g.key===exact);
+    if(idx<0 && !c.sourceBetId){
+      // Strong fallback for a cut-off duplicate: same book/type/selection/line/stake.
+      const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
+      idx=groups.findIndex(g=>{const x=g.candidate;if(x.sourceBetId)return false;return x.sportsbook===c.sportsbook&&x.betType===c.betType&&normalizeTeamName(x.matchedSelection||x.selection||'')===sel&&String(x.line??'')===String(c.line??'')&&String(x.stakeUsd??'')===String(c.stakeUsd??'');});
+    }
+    if(idx<0)groups.push({key:exact,candidate:{...c,reconciledCount:1}});
+    else groups[idx].candidate=mergeScreenshotCandidateEvidence(groups[idx].candidate,c);
+  }
+  return groups.map(g=>finalizeScreenshotCandidateReadiness(g.candidate));
+}
+function existingSlipDuplicate(c){
+  if(c.matchStatus!=='matched'||!c.matchedGameId)return null;
+  const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
+  return state.wagers.find(w=>w.gameId===c.matchedGameId&&w.betType===c.betType&&normalizeTeamName(w.selection)===sel)||null;
+}
+function screenshotCandidateToWager(c,id){
+  const g=gameById(c.matchedGameId);
+  if(!g)throw new Error('Matched TrackPicks game is unavailable.');
+  const selection=c.matchedSelection||c.selection;
+  const line=c.betType==='Moneyline'?(Number.isFinite(Number(c.line))?Number(c.line):Number(marketLineFor(g,'Moneyline',selection))):Number(c.line);
+  const odds=Number(c.odds),units=Number(c.units);
+  const pick=c.betType==='Spread'?`${selection} ${signed(line)}`:c.betType==='Moneyline'?`${selection} ML`:`${selection} ${line}`;
+  return {id:id||crypto.randomUUID(),gameId:g.id,betType:c.betType,selection,line,payoutOdds:odds,units,who:state.displayName,pick,result:'Pending',marketSpread:g.spread,marketTotal:g.total,marketMoneyline:c.betType==='Moneyline'?marketLineFor(g,'Moneyline',selection):null};
+}
+async function saveScreenshotCandidate(c,existing=null){
+  const obj=screenshotCandidateToWager(c,existing?.id);
+  if(existing)obj.result=existing.result||'Pending';
+  const {error}=await state.sb.from('wagers').upsert(toDbWager(obj));
+  if(error)throw error;
+  const i=state.wagers.findIndex(w=>w.id===obj.id);if(i>=0)state.wagers[i]=obj;else state.wagers.push(obj);
+  return obj;
+}
+function startScreenshotSlipWorkflow(){
+  const reconciled=reconcileScreenshotImportBatch();
+  const wrong=reconciled.filter(c=>c.matchStatus==='wrong-week'||c.matchStatus==='future-week');
+  const usable=reconciled.filter(c=>c.matchStatus==='matched');
+  const duplicates=[],ready=[],review=[];
+  for(const c of usable){const d=existingSlipDuplicate(c);if(d)duplicates.push({candidate:c,existing:d});else if(c.reviewState==='Ready for Slip')ready.push(c);else review.push(c);}
+  const noPick=reconciled.filter(c=>c.matchStatus!=='wrong-week'&&c.matchStatus!=='future-week'&&c.matchStatus!=='matched');
+  state.screenshotImportFlow={reconciled,wrong,ready,review,duplicates,noPick,stage:ready.length?'ready':duplicates.length?'duplicates':review.length?'review':'summary',index:0,saving:false};
+  render();
+}
+function advanceScreenshotFlow(){
+  const f=state.screenshotImportFlow;if(!f)return;
+  if(f.stage==='ready')f.stage=f.duplicates.length?'duplicates':f.review.length?'review':'summary';
+  else if(f.stage==='duplicates')f.stage=f.review.length?'review':'summary';
+  else if(f.stage==='review')f.stage='summary';
+  f.index=0;render();
+}
+async function confirmReadyScreenshotBets(){
+  const f=state.screenshotImportFlow;if(!f||f.saving)return;f.saving=true;render();
+  try{for(const c of f.ready)await saveScreenshotCandidate(c);f.ready=[];advanceScreenshotFlow();}
+  catch(e){f.saving=false;alert(`Could not add imported bets: ${e.message||e}`);render();}
+}
+async function resolveScreenshotDuplicate(useImport){
+  const f=state.screenshotImportFlow;if(!f||f.saving)return;const row=f.duplicates[f.index];if(!row)return;
+  f.saving=true;render();try{if(useImport)await saveScreenshotCandidate(row.candidate,row.existing);f.index++;f.saving=false;if(f.index>=f.duplicates.length)advanceScreenshotFlow();else render();}catch(e){f.saving=false;alert(`Could not update duplicate: ${e.message||e}`);render();}
+}
+async function saveScreenshotReview(){
+  const f=state.screenshotImportFlow;if(!f||f.saving)return;const c=f.review[f.index];if(!c)return;
+  const odds=Number(document.getElementById('importReviewOdds')?.value),units=Number(document.getElementById('importReviewUnits')?.value),lineEl=document.getElementById('importReviewLine');
+  if(!Number.isFinite(odds)){alert('Enter valid Actual Payout Odds.');return;}if(!Number.isFinite(units)||units<=0){alert('Enter valid Units greater than 0.');return;}
+  c.odds=odds;c.units=units;c.oddsNeedsReview=false;if(lineEl){const n=Number(lineEl.value);if(!Number.isFinite(n)){alert('Enter a valid Actual Line.');return;}c.line=n;}finalizeScreenshotCandidateReadiness(c);
+  if(c.reviewState!=='Ready for Slip'){alert(`Still needs: ${(c.missingFields||[]).join(', ')}`);return;}
+  f.saving=true;render();try{await saveScreenshotCandidate(c);f.index++;f.saving=false;if(f.index>=f.review.length)advanceScreenshotFlow();else render();}catch(e){f.saving=false;alert(`Could not save imported bet: ${e.message||e}`);render();}
+}
+function importCandidateLabel(c){const sel=c.matchedSelection||c.selection||'Unknown pick';const line=c.betType==='Moneyline'?' ML':Number.isFinite(Number(c.line))?` ${signed(c.line)}`:'';return `${sel}${line}`;}
+function renderScreenshotImportFlow(){
+  const f=state.screenshotImportFlow;if(!f)return'';
+  const shell=(title,body,actions)=>`<div class="overlay"><section class="sheet" style="max-height:88vh;overflow:auto"><div class="close-row"><div><div class="eyebrow">2.5.5 Import</div><h2 style="margin:4px 0">${escapeAttr(title)}</h2></div><button class="icon-btn" data-close-import-flow>✕</button></div>${body}<div style="display:grid;gap:10px;margin-top:16px">${actions}</div></section></div>`;
+  if(f.stage==='ready'){
+    const body=`<p>Confirm these ${f.ready.length} complete wager${f.ready.length===1?'':'s'} together before TrackPicks adds them to your Slip.</p><div class="parsed-bets-list">${f.ready.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div><div>${escapeAttr(signed(c.odds))} · ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u</div></div>`).join('')}</div>`;
+    return shell('Ready for Slip',body,`<button class="primary" data-confirm-ready-import ${f.saving?'disabled':''}>${f.saving?'Adding…':`Confirm All & Add ${f.ready.length} to Slip`}</button><button class="secondary" data-cancel-import-flow>Cancel</button>`);
+  }
+  if(f.stage==='duplicates'){
+    const r=f.duplicates[f.index],c=r.candidate,w=r.existing;const body=`<div class="parsed-bet-warning"><strong>Duplicate ${f.index+1} of ${f.duplicates.length}</strong><br>TrackPicks already has this pick. Compare the saved values with the screenshot.</div><div class="parsed-bets-list"><div class="parsed-bet-card"><strong>Existing Slip</strong><div>${escapeAttr(w.pick)}</div><div>Actual line ${escapeAttr(String(w.line))} · Payout ${escapeAttr(signed(w.payoutOdds))} · ${escapeAttr(String(w.units))}u</div></div><div class="parsed-bet-card"><strong>Screenshot</strong><div>${escapeAttr(importCandidateLabel(c))}</div><div>Actual line ${escapeAttr(String(c.line??'—'))} · Payout ${escapeAttr(c.odds==null?'—':signed(c.odds))} · ${escapeAttr(c.units==null?'—':String(c.units))}u</div></div></div>`;
+    return shell('Duplicate Review',body,`<button class="primary" data-use-import-duplicate ${f.saving?'disabled':''}>Use Screenshot Values & Next</button><button class="secondary" data-keep-existing-duplicate ${f.saving?'disabled':''}>Keep Existing & Next</button>`);
+  }
+  if(f.stage==='review'){
+    const c=f.review[f.index];const lineField=c.betType==='Moneyline'?'':`<div class="field"><label>Actual ${c.betType==='Total'?'Total':'Line'}</label><input id="importReviewLine" inputmode="decimal" value="${escapeAttr(c.line??'')}"></div>`;const body=`<div class="parsed-bet-warning"><strong>Needs Review ${f.index+1} of ${f.review.length}</strong><br>${escapeAttr((c.missingFields||[]).join(' · '))}</div><div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div><div class="setup-grid">${lineField}<div class="field"><label>Actual Payout Odds</label><input id="importReviewOdds" inputmode="numeric" value="${escapeAttr(c.odds??'')}"></div><div class="field"><label>Units Wagered</label><input id="importReviewUnits" inputmode="decimal" value="${escapeAttr(c.units??'')}"></div></div>`;
+    return shell('Review Wager',body,`<button class="primary" data-save-import-review ${f.saving?'disabled':''}>${f.saving?'Saving…':'Save to Slip & Next'}</button>`);
+  }
+  const wrong=f.wrong.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${c.detectedWeek?`Week ${Number(c.detectedWeek)}`:'Outside this week'} · Upload this wager in the correct week to add it to your Slip.</div></div>`).join('');
+  const noPick=f.noPick.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(c.selection||'No pick detected')}</strong><div>Not enough matchup/selection information to create a Slip wager.</div></div>`).join('');
+  return shell('Import Complete',`<p>Finished processing this batch.</p>${f.wrong.length?`<h3>Wrong Week (${f.wrong.length})</h3><div class="parsed-bets-list">${wrong}</div>`:''}${f.noPick.length?`<h3>No Pick Detected (${f.noPick.length})</h3><div class="parsed-bets-list">${noPick}</div>`:''}`,`<button class="primary" data-finish-import-flow>Done</button>`);
+}
+
 function renderScreenshotImporter(){
   const files=state.screenshotImportFiles;
   const unitSet=Number.isFinite(Number(state.standardUnitSize))&&Number(state.standardUnitSize)>0;
@@ -3151,7 +3269,8 @@ ${escapeAttr((d.trace.topGames||[]).join('\n')||'none')}</pre></div>`).join('')}
       ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
       ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
       <div class="screenshot-import-actions">${files.length?`<button type="button" class="primary" data-process-screenshots ${state.screenshotImportProcessing?'disabled':''}>${state.screenshotImportProcessing?'Processing Screenshots…':(totalCandidates?'Process Remaining Screenshots':'Process Screenshots')}</button>`:''}<button type="button" class="${files.length?'secondary':'primary'}" data-add-screenshots ${state.screenshotImportProcessing?'disabled':''}>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch '+(state.screenshotImportProcessing?'disabled':'')+'>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
-      <div class="screenshot-import-stage-head"><div><span>Stage 4</span><strong>Parse + validate Week ${importWeek}</strong></div><p>TrackPicks auto-detects card vs compact-row layouts, parses every wager it can find, and only auto-matches when both teams agree with a Week ${importWeek} game.</p></div>
+      ${totalCandidates&&!state.screenshotImportProcessing?`<button type="button" class="primary full-width" data-review-screenshot-results>Review Import Results</button>`:''}
+      <div class="screenshot-import-stage-head"><div><span>Stage 5</span><strong>Reconcile + send to Slip</strong></div><p>TrackPicks automatically reconciles overlapping screenshots first, then groups complete bets, duplicates, review items, and wrong-week bets.</p></div>
       <div class="screenshot-review-list">${cards}</div>
     </div>
   </section></div>`;
@@ -3359,7 +3478,14 @@ function bind(){
   document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
   document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-process-screenshots]').forEach(el=>el.onclick=processScreenshotBatch);
-  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';render();});
+  document.querySelectorAll('[data-review-screenshot-results]').forEach(el=>el.onclick=startScreenshotSlipWorkflow);
+  document.querySelectorAll('[data-confirm-ready-import]').forEach(el=>el.onclick=confirmReadyScreenshotBets);
+  document.querySelectorAll('[data-use-import-duplicate]').forEach(el=>el.onclick=()=>resolveScreenshotDuplicate(true));
+  document.querySelectorAll('[data-keep-existing-duplicate]').forEach(el=>el.onclick=()=>resolveScreenshotDuplicate(false));
+  document.querySelectorAll('[data-save-import-review]').forEach(el=>el.onclick=saveScreenshotReview);
+  document.querySelectorAll('[data-close-import-flow],[data-cancel-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;render();});
+  document.querySelectorAll('[data-finish-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=false;state.view='slip';render();});
+  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportFlow=null;render();});
   document.querySelectorAll('[data-import-open-settings]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;state.showSettings=true;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
   document.querySelectorAll('[data-import-history]').forEach(el=>el.onclick=()=>document.querySelector('[data-history-file]')?.click());
