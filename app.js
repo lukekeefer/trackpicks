@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.5.1';
+const BUILD_VERSION = '2.5.5.2';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -3147,8 +3147,20 @@ function screenshotCandidateToWager(c,id){
   return {id:id||crypto.randomUUID(),gameId:g.id,betType:c.betType,selection,line,payoutOdds:odds,units,who:state.displayName,pick,result:'Pending',marketSpread:g.spread,marketTotal:g.total,marketMoneyline:c.betType==='Moneyline'?marketLineFor(g,'Moneyline',selection):null};
 }
 async function saveScreenshotCandidate(c,existing=null){
-  const obj=screenshotCandidateToWager(c,existing?.id);
-  if(existing)obj.result=existing.result||'Pending';
+  const imported=screenshotCandidateToWager(c,existing?.id);
+  // A screenshot duplicate updates sportsbook-derived values on the existing TrackPicks pick.
+  // Preserve TrackPicks-owned metadata such as Who, result/status, import linkage, and any
+  // future wager-level metadata already present on the local record.
+  const obj=existing
+    ? {...existing,
+       line:imported.line,
+       payoutOdds:imported.payoutOdds,
+       units:imported.units,
+       pick:imported.pick,
+       marketSpread:existing.marketSpread ?? imported.marketSpread,
+       marketTotal:existing.marketTotal ?? imported.marketTotal,
+       marketMoneyline:existing.marketMoneyline ?? imported.marketMoneyline}
+    : imported;
   const {error}=await state.sb.from('wagers').upsert(toDbWager(obj));
   if(error)throw error;
   const i=state.wagers.findIndex(w=>w.id===obj.id);if(i>=0)state.wagers[i]=obj;else state.wagers.push(obj);
@@ -3210,18 +3222,18 @@ async function saveScreenshotReview(){
 function importCandidateLabel(c){const sel=c.matchedSelection||c.selection||'Unknown pick';const line=c.betType==='Moneyline'?' ML':Number.isFinite(Number(c.line))?` ${signed(c.line)}`:'';return `${sel}${line}`;}
 function renderScreenshotImportFlow(){
   const f=state.screenshotImportFlow;if(!f)return'';
-  const shell=(title,body,actions)=>`<div class="overlay"><section class="sheet" style="max-height:88vh;overflow:auto"><div class="close-row"><div><div class="eyebrow">2.5.5.1 Import</div><h2 style="margin:4px 0">${escapeAttr(title)}</h2></div><button class="icon-btn" data-close-import-flow>✕</button></div>${body}<div style="display:grid;gap:10px;margin-top:16px">${actions}</div></section></div>`;
+  const shell=(title,body,actions)=>`<div class="overlay" style="padding-bottom:calc(82px + env(safe-area-inset-bottom, 0px));align-items:flex-end"><section class="sheet" style="max-height:calc(88vh - 82px);overflow:auto;margin-bottom:0"><div class="close-row"><div><div class="eyebrow">2.5.5.2 Import</div><h2 style="margin:4px 0">${escapeAttr(title)}</h2></div><button class="icon-btn" data-close-import-flow aria-label="Cancel import review">✕</button></div>${body}<div style="display:grid;gap:10px;margin-top:16px">${actions}</div></section></div>`;
   if(f.stage==='ready'){
     const body=`<p>Confirm these ${f.ready.length} complete wager${f.ready.length===1?'':'s'} together before TrackPicks adds them to your Slip.</p><div class="parsed-bets-list">${f.ready.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div><div>${escapeAttr(signed(c.odds))} · ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u</div></div>`).join('')}</div>`;
     return shell('Ready for Slip',body,`<button class="primary" data-confirm-ready-import ${f.saving?'disabled':''}>${f.saving?'Adding…':`Confirm All & Add ${f.ready.length} to Slip`}</button><button class="secondary" data-cancel-import-flow>Cancel</button>`);
   }
   if(f.stage==='duplicates'){
-    const r=f.duplicates[f.index],c=r.candidate,w=r.existing;const body=`<div class="parsed-bet-warning"><strong>Duplicate ${f.index+1} of ${f.duplicates.length}</strong><br>TrackPicks already has this pick. Compare the saved values with the screenshot.</div><div class="parsed-bets-list"><div class="parsed-bet-card"><strong>Existing Slip</strong><div>${escapeAttr(w.pick)}</div><div>Actual line ${escapeAttr(String(w.line))} · Payout ${escapeAttr(signed(w.payoutOdds))} · ${escapeAttr(String(w.units))}u</div></div><div class="parsed-bet-card"><strong>Screenshot</strong><div>${escapeAttr(importCandidateLabel(c))}</div><div>Actual line ${escapeAttr(String(c.line??'—'))} · Payout ${escapeAttr(c.odds==null?'—':signed(c.odds))} · ${escapeAttr(c.units==null?'—':String(c.units))}u</div></div></div>`;
-    return shell('Duplicate Review',body,`<button class="primary" data-use-import-duplicate ${f.saving?'disabled':''}>Use Screenshot Values & Next</button><button class="secondary" data-keep-existing-duplicate ${f.saving?'disabled':''}>Keep Existing & Next</button>`);
+    const r=f.duplicates[f.index],c=r.candidate,w=r.existing;const body=`<div class="parsed-bet-warning"><strong>Existing pick ${f.index+1} of ${f.duplicates.length}</strong><br>TrackPicks found this pick in your Slip. Screenshot values can update the sportsbook fields without replacing your TrackPicks pick.</div><div class="parsed-bets-list"><div class="parsed-bet-card"><strong>Existing Slip</strong><div>${escapeAttr(w.pick)}</div><div>Actual line ${escapeAttr(String(w.line))} · Payout ${escapeAttr(signed(w.payoutOdds))} · ${escapeAttr(String(w.units))}u</div></div><div class="parsed-bet-card"><strong>Screenshot</strong><div>${escapeAttr(importCandidateLabel(c))}</div><div>Actual line ${escapeAttr(String(c.line??'—'))} · Payout ${escapeAttr(c.odds==null?'—':signed(c.odds))} · ${escapeAttr(c.units==null?'—':String(c.units))}u</div></div></div>`;
+    return shell('Update Existing Pick',body,`<button class="primary" data-use-import-duplicate ${f.saving?'disabled':''}>Update Pick & Next</button><button class="secondary" data-keep-existing-duplicate ${f.saving?'disabled':''}>Keep Existing & Next</button><button class="secondary" data-cancel-import-flow ${f.saving?'disabled':''}>Cancel Import</button>`);
   }
   if(f.stage==='review'){
     const c=f.review[f.index];const lineField=c.betType==='Moneyline'?'':`<div class="field"><label>Actual ${c.betType==='Total'?'Total':'Line'}</label><input id="importReviewLine" inputmode="decimal" value="${escapeAttr(c.line??'')}"></div>`;const body=`<div class="parsed-bet-warning"><strong>Needs Review ${f.index+1} of ${f.review.length}</strong><br>${escapeAttr((c.missingFields||[]).join(' · '))}</div><div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div><div class="setup-grid">${lineField}<div class="field"><label>Actual Payout Odds</label><input id="importReviewOdds" inputmode="numeric" value="${escapeAttr(c.odds??'')}"></div><div class="field"><label>Units Wagered</label><input id="importReviewUnits" inputmode="decimal" value="${escapeAttr(c.units??'')}"></div></div>`;
-    return shell('Review Wager',body,`<button class="primary" data-save-import-review ${f.saving?'disabled':''}>${f.saving?'Saving…':'Save to Slip & Next'}</button>`);
+    return shell('Review Wager',body,`<button class="primary" data-save-import-review ${f.saving?'disabled':''}>${f.saving?'Saving…':'Save to Slip & Next'}</button><button class="secondary" data-cancel-import-flow ${f.saving?'disabled':''}>Cancel Import</button>`);
   }
   const wrong=f.wrong.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${c.detectedWeek?`Week ${Number(c.detectedWeek)}`:'Outside this week'} · Upload this wager in the correct week to add it to your Slip.</div></div>`).join('');
   const noPick=f.noPick.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(c.selection||'No pick detected')}</strong><div>Not enough matchup/selection information to create a Slip wager.</div></div>`).join('');
@@ -3503,7 +3515,7 @@ function bind(){
   document.querySelectorAll('[data-keep-existing-duplicate]').forEach(el=>el.onclick=()=>resolveScreenshotDuplicate(false));
   document.querySelectorAll('[data-save-import-review]').forEach(el=>el.onclick=saveScreenshotReview);
   document.querySelectorAll('[data-close-import-flow],[data-cancel-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=true;render();});
-  document.querySelectorAll('[data-finish-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=false;state.view='slip';render();});
+  document.querySelectorAll('[data-finish-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=false;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportProcessing=false;state.view='slip';render();});
   document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportFlow=null;render();});
   document.querySelectorAll('[data-import-open-settings]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;state.showSettings=true;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
