@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.16.3';
+const BUILD_VERSION = '2.5.4.16.4';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -2122,32 +2122,47 @@ function recoverDraftKingsSettledMatchup(candidate){
     if(stop>0)scoreboard=scoreboard.slice(0,stop);
   }
 
-  // 2.5.4.16.3: derive the matchup from the two team rows between Final and
-  // Share, then hand that canonical pair to the existing game matcher. This
-  // avoids whole-block substring collisions such as Michigan inside Western
-  // Michigan and still tolerates mangled quarter/score digits around the name.
+  // 2.5.4.16.4: once DK gives us two scoreboard teams, treat the PAIR as the
+  // game identity. Resolve each recovered row against each game's away/home
+  // names and require two DIFFERENT scoreboard rows to cover both sides of the
+  // same game. This intentionally avoids independent "Texas" and "Tennessee"
+  // matches landing on two unrelated games, and it also tolerates short OCR
+  // names vs canonical names such as "Oregon" -> "Oregon Ducks".
   const rowTeams=extractDraftKingsScoreboardTeams(scoreboard);
-  const rowKeys=new Set(rowTeams.map(x=>normalizeTeamName(resolveEspnTeamName(x.team)||x.team)));
+  if(rowTeams.length<2)return null;
   const selectedText=String(candidate.rawSelection||candidate.selection||'');
   const hits=[];
   for(const game of (state.games||[])){
-    const awayKey=normalizeTeamName(resolveEspnTeamName(game.away)||game.away);
-    const homeKey=normalizeTeamName(resolveEspnTeamName(game.home)||game.home);
-    if(!rowKeys.has(awayKey)||!rowKeys.has(homeKey))continue;
+    let bestPair=null;
+    for(let i=0;i<rowTeams.length;i++){
+      for(let j=0;j<rowTeams.length;j++){
+        if(i===j)continue;
+        const awayScore=importTeamTextScore(rowTeams[i].team,game.away);
+        const homeScore=importTeamTextScore(rowTeams[j].team,game.home);
+        if(awayScore<60||homeScore<60)continue;
+        const pairScore=awayScore+homeScore;
+        if(!bestPair||pairScore>bestPair.pairScore)bestPair={awayScore,homeScore,pairScore,awayRow:rowTeams[i],homeRow:rowTeams[j]};
+      }
+    }
+    if(!bestPair)continue;
     const selAway=importTeamTextScore(selectedText,game.away);
     const selHome=importTeamTextScore(selectedText,game.home);
     const selectionScore=Math.max(selAway,selHome);
     if(candidate.betType!=='Total'&&selectionScore<60)continue;
     hits.push({
       game,
-      score:200+selectionScore,
+      score:300+bestPair.pairScore+selectionScore,
+      pairScore:bestPair.pairScore,
       selectionTeam:candidate.betType==='Total'?null:(selAway>=selHome?game.away:game.home),
       scoreboardText:scoreboard,
-      rowTeams
+      rowTeams,
+      pairRows:[bestPair.awayRow,bestPair.homeRow]
     });
   }
   hits.sort((a,b)=>b.score-a.score);
   if(!hits.length)return null;
+  // A unique two-team intersection is authoritative. If OCR happens to produce
+  // multiple pair-compatible games, retain a small ambiguity guard.
   if(hits.length===1||hits[0].score-hits[1].score>=12)return hits[0];
   return null;
 }
@@ -2288,6 +2303,20 @@ function buildDraftKingsSettledDiagnostic(candidate){
   const teamClues=rowTeamHits.slice(0,8).map(x=>({team:x.team,score:x.score}));
   const rowKeys=new Set(rowTeamHits.map(x=>normalizeTeamName(resolveEspnTeamName(x.team)||x.team)));
   const selectedText=String(candidate.rawSelection||candidate.selection||'');
+  const pairMatches=[];
+  if(rowTeamHits.length>=2){
+    for(const game of (state.games||[])){
+      let bestPair=0;
+      for(let i=0;i<rowTeamHits.length;i++)for(let j=0;j<rowTeamHits.length;j++){
+        if(i===j)continue;
+        const a=importTeamTextScore(rowTeamHits[i].team,game.away);
+        const h=importTeamTextScore(rowTeamHits[j].team,game.home);
+        if(a>=60&&h>=60)bestPair=Math.max(bestPair,a+h);
+      }
+      if(bestPair)pairMatches.push({game,score:bestPair});
+    }
+    pairMatches.sort((a,b)=>b.score-a.score);
+  }
   const scored=(state.games||[]).map(game=>{
     const awayKey=normalizeTeamName(resolveEspnTeamName(game.away)||game.away);
     const homeKey=normalizeTeamName(resolveEspnTeamName(game.home)||game.home);
@@ -2305,6 +2334,7 @@ function buildDraftKingsSettledDiagnostic(candidate){
     scoreboard,
     scoreboardRows:rowTeamHits.map(x=>`${x.row}  =>  ${resolveEspnTeamName(x.team)||x.team} [${x.score}; specificity ${x.specificity}]`),
     teamClues:teamClues.map(x=>`${x.team} (${x.score})`),
+    pairMatches:pairMatches.slice(0,5).map(x=>`W${x.game.week} ${x.game.away} @ ${x.game.home} | pair ${x.score}`),
     topGames:scored.map(x=>`W${x.game.week} ${x.game.away} @ ${x.game.home} | board ${x.awayScore}/${x.homeScore} | selection ${x.selAway}/${x.selHome}`),
     recoveredSelection:String(candidate.dkRecoveredSelection||''),
     matchStatus:String(candidate.matchStatus||''),
@@ -3077,6 +3107,9 @@ Recovered selection: ${escapeAttr(d.trace.recoveredSelection||'none')}
 Match status: ${escapeAttr(d.trace.matchStatus||'none')}
 Matched game: ${escapeAttr(d.trace.matchedGame||'none')}
 Detected/matched week: ${escapeAttr(String(d.trace.detectedWeek||'none'))}
+
+TWO-TEAM PAIR MATCHES
+${escapeAttr((d.trace.pairMatches||[]).join('\n')||'none')}
 
 FINAL → SHARE BLOCK
 ${escapeAttr(d.trace.scoreboard||'(none)')}
