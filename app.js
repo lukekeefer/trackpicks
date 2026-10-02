@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.16.1';
+const BUILD_VERSION = '2.5.4.16.2';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -1414,7 +1414,11 @@ function detectScreenshotSportsbook(text){
   const t=String(text||'');
   if(/Fanatics Sportsbook/i.test(t)) return 'Fanatics';
   if(/FanDuel/i.test(t)) return 'FanDuel';
-  if(/Bet ID:\s*DK/i.test(t)||/DraftKings/i.test(t)) return 'DraftKings';
+  // 2.5.4.16.2: settled DK OCR often mangles or drops the D in DRAFTKINGS,
+  // but THE CROWN IS YOURS is a stable DK-only card header. Recognize the
+  // ticket globally so every wager card in the screenshot gets the DK settled
+  // Final->Share recovery path, including an earlier card with no visible logo.
+  if(/Bet ID:\s*DK/i.test(t)||/DraftKings/i.test(t)||/\bTHE CROWN IS YOURS\b/i.test(t)||/\b[BO]?RAFTKINGS\b/i.test(t)) return 'DraftKings';
   // 2.5.4.10: some cropped sportsbook screens omit the brand name entirely.
   // Infer the UI grammar from stable labels, never from a team-specific token.
   if(/\bMy Activity\b/i.test(t)&&/\bTo Pay:\b|\bBonus Bet\b/i.test(t)) return 'DraftKings';
