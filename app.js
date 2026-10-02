@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.16.4';
+const BUILD_VERSION = '2.5.4.16.5';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -2074,8 +2074,34 @@ function canonicalImportSelectionForMatchedGame(candidate,game){
   return '';
 }
 
+function draftKingsScoreboardTeamScore(text,teamName){
+  // .16.5: DK scoreboards frequently print only the school name while TrackPicks
+  // stores the full ESPN identity ("Boise State" vs "Boise State Broncos").
+  // The normal matcher intentionally scores that containment conservatively.
+  // For a scoreboard ROW we can safely promote a *leading* canonical school
+  // prefix, while still refusing dangerous interior matches such as
+  // "Michigan" -> "Western Michigan Broncos".
+  const normal=importTeamTextScore(text,teamName);
+  if(normal>=88)return normal;
+  const row=normalizeImportTeamText(text);
+  if(!row)return normal;
+  let best=normal;
+  for(const form of importTeamForms(teamName)){
+    const words=form.split(' ').filter(Boolean);
+    for(let n=words.length-1;n>=1;n--){
+      const prefix=words.slice(0,n).join(' ');
+      if(prefix.length<4)continue;
+      if((` ${row} `).includes(` ${prefix} `)){
+        best=Math.max(best,90);
+        break;
+      }
+    }
+  }
+  return best;
+}
+
 function extractDraftKingsScoreboardTeams(scoreboard){
-  // 2.5.4.16.3: settled DK scoreboards are row-oriented. OCR can make a
+  // 2.5.4.16.5: settled DK scoreboards are row-oriented. OCR can make a
   // shorter school name ("Michigan") appear to match inside a longer one
   // ("Western Michigan"), so resolve each scoreboard ROW independently and
   // prefer the most specific/longest team form on that row.
@@ -2088,7 +2114,7 @@ function extractDraftKingsScoreboardTeams(scoreboard){
     if(!normalizedRow)continue;
     let best=null;
     for(const team of teamNames){
-      const score=importTeamTextScore(row,team);
+      const score=draftKingsScoreboardTeamScore(row,team);
       if(score<88)continue;
       const forms=importTeamForms(team).filter(form=>(` ${normalizedRow} `).includes(` ${form} `));
       const specificity=forms.reduce((m,form)=>Math.max(m,form.length),0);
@@ -2145,8 +2171,11 @@ function recoverDraftKingsSettledMatchup(candidate){
       }
     }
     if(!bestPair)continue;
-    const selAway=importTeamTextScore(selectedText,game.away);
-    const selHome=importTeamTextScore(selectedText,game.home);
+    // Use the same scoreboard-safe prefix bridge for the wager header. This
+    // recovers OCR like "a Oregon" without making "Michigan" eligible for
+    // "Western Michigan".
+    const selAway=draftKingsScoreboardTeamScore(selectedText,game.away);
+    const selHome=draftKingsScoreboardTeamScore(selectedText,game.home);
     const selectionScore=Math.max(selAway,selHome);
     if(candidate.betType!=='Total'&&selectionScore<60)continue;
     hits.push({
