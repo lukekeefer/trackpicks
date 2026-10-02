@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.16.5';
+const BUILD_VERSION = '2.5.4.16.6';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -2101,29 +2101,55 @@ function draftKingsScoreboardTeamScore(text,teamName){
 }
 
 function extractDraftKingsScoreboardTeams(scoreboard){
-  // 2.5.4.16.5: settled DK scoreboards are row-oriented. OCR can make a
-  // shorter school name ("Michigan") appear to match inside a longer one
-  // ("Western Michigan"), so resolve each scoreboard ROW independently and
-  // prefer the most specific/longest team form on that row.
+  // 2.5.4.16.6: DK settled scoreboards are a constrained lookup problem.
+  // Between Final and Share there are two score rows. Ignore every number and
+  // symbol, preserve the English-letter groups on each row, then compare those
+  // groups directly with known TrackPicks team identities/aliases. Canonical
+  // school-name prefixes are valid here ("Oregon" -> "Oregon Ducks",
+  // "Boise State" -> "Boise State Broncos"). Longest phrase wins so
+  // "Western Michigan" beats the interior "Michigan" match.
   const rows=String(scoreboard||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   const teamNames=[...new Set((state.games||[]).flatMap(g=>[g.away,g.home]).filter(Boolean))];
   const hits=[];
+
+  const alphaOnly=value=>String(value||'')
+    .replace(/[^A-Za-z]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+
+  const lookupForms=team=>{
+    const forms=new Set(importTeamForms(team));
+    const canonical=normalizeImportTeamText(resolveEspnTeamName(team)||team);
+    const words=canonical.split(' ').filter(Boolean);
+    // Add school-name prefixes from the canonical ESPN identity. Require at
+    // least 3 letters so tiny OCR fragments cannot become team identities.
+    for(let n=1;n<words.length;n++){
+      const prefix=words.slice(0,n).join(' ');
+      if(prefix.length>=3)forms.add(prefix);
+    }
+    return [...forms].filter(Boolean).sort((a,b)=>b.length-a.length);
+  };
+
   for(const row of rows){
     if(/^Final\b/i.test(row)||/^<?\s*Share\b/i.test(row))continue;
-    const normalizedRow=normalizeImportTeamText(row);
-    if(!normalizedRow)continue;
+    const letters=alphaOnly(row);
+    if(!letters)continue;
     let best=null;
     for(const team of teamNames){
-      const score=draftKingsScoreboardTeamScore(row,team);
-      if(score<88)continue;
-      const forms=importTeamForms(team).filter(form=>(` ${normalizedRow} `).includes(` ${form} `));
-      const specificity=forms.reduce((m,form)=>Math.max(m,form.length),0);
-      if(!specificity)continue;
-      const candidate={team,score,specificity,row};
-      if(!best || candidate.specificity>best.specificity || (candidate.specificity===best.specificity&&candidate.score>best.score))best=candidate;
+      for(const form of lookupForms(team)){
+        const f=alphaOnly(form);
+        if(!f)continue;
+        if(!(` ${letters} `).includes(` ${f} `))continue;
+        const specificity=f.length;
+        const candidate={team,score:100,specificity,row,letters,matchedText:f};
+        if(!best || candidate.specificity>best.specificity)best=candidate;
+        break;
+      }
     }
     if(best)hits.push(best);
   }
+
   const unique=[];
   const seen=new Set();
   for(const hit of hits){
@@ -2361,7 +2387,7 @@ function buildDraftKingsSettledDiagnostic(candidate){
     contextHasFinal:finalAt>=0,
     boundary,
     scoreboard,
-    scoreboardRows:rowTeamHits.map(x=>`${x.row}  =>  ${resolveEspnTeamName(x.team)||x.team} [${x.score}; specificity ${x.specificity}]`),
+    scoreboardRows:rowTeamHits.map(x=>`${x.row}  => letters: ${x.letters||''} => matched: ${x.matchedText||''} => ${resolveEspnTeamName(x.team)||x.team} [${x.score}; specificity ${x.specificity}]`),
     teamClues:teamClues.map(x=>`${x.team} (${x.score})`),
     pairMatches:pairMatches.slice(0,5).map(x=>`W${x.game.week} ${x.game.away} @ ${x.game.home} | pair ${x.score}`),
     topGames:scored.map(x=>`W${x.game.week} ${x.game.away} @ ${x.game.home} | board ${x.awayScore}/${x.homeScore} | selection ${x.selAway}/${x.selHome}`),
