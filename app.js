@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.16.6';
+const BUILD_VERSION = '2.5.4.16.7';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -2101,65 +2101,38 @@ function draftKingsScoreboardTeamScore(text,teamName){
 }
 
 function extractDraftKingsScoreboardTeams(scoreboard){
-  // 2.5.4.16.6: DK settled scoreboards are a constrained lookup problem.
-  // Between Final and Share there are two score rows. Ignore every number and
-  // symbol, preserve the English-letter groups on each row, then compare those
-  // groups directly with known TrackPicks team identities/aliases. Canonical
-  // school-name prefixes are valid here ("Oregon" -> "Oregon Ducks",
-  // "Boise State" -> "Boise State Broncos"). Longest phrase wins so
-  // "Western Michigan" beats the interior "Michigan" match.
+  // 2.5.4.16.7: DO NOT resolve scoreboard rows to canonical teams here.
+  // The Final -> Share block already gives us the two most useful clues: the
+  // English-letter groups on the two score rows. Preserve those clues and use
+  // them AS A PAIR against known TrackPicks matchups. This prevents an
+  // ambiguous clue such as "Texas" from prematurely becoming "Texas Southern".
   const rows=String(scoreboard||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-  const teamNames=[...new Set((state.games||[]).flatMap(g=>[g.away,g.home]).filter(Boolean))];
   const hits=[];
-
+  const noise=new Set(['fd','f','d','ql','q','t','final','share']);
   const alphaOnly=value=>String(value||'')
     .replace(/[^A-Za-z]+/g,' ')
     .replace(/\s+/g,' ')
     .trim()
     .toLowerCase();
 
-  const lookupForms=team=>{
-    const forms=new Set(importTeamForms(team));
-    const canonical=normalizeImportTeamText(resolveEspnTeamName(team)||team);
-    const words=canonical.split(' ').filter(Boolean);
-    // Add school-name prefixes from the canonical ESPN identity. Require at
-    // least 3 letters so tiny OCR fragments cannot become team identities.
-    for(let n=1;n<words.length;n++){
-      const prefix=words.slice(0,n).join(' ');
-      if(prefix.length>=3)forms.add(prefix);
-    }
-    return [...forms].filter(Boolean).sort((a,b)=>b.length-a.length);
-  };
-
   for(const row of rows){
     if(/^Final\b/i.test(row)||/^<?\s*Share\b/i.test(row))continue;
-    const letters=alphaOnly(row);
+    const rawLetters=alphaOnly(row);
+    if(!rawLetters)continue;
+    const words=rawLetters.split(' ').filter(w=>w.length>=2&&!noise.has(w));
+    const letters=words.join(' ').trim();
     if(!letters)continue;
-    let best=null;
-    for(const team of teamNames){
-      for(const form of lookupForms(team)){
-        const f=alphaOnly(form);
-        if(!f)continue;
-        if(!(` ${letters} `).includes(` ${f} `))continue;
-        const specificity=f.length;
-        const candidate={team,score:100,specificity,row,letters,matchedText:f};
-        if(!best || candidate.specificity>best.specificity)best=candidate;
-        break;
-      }
+    // A scoreboard row must contain at least one clue that resembles a known
+    // team. Keep the raw letters; canonical identity is deliberately deferred.
+    let best=0,bestTeam='';
+    for(const game of (state.games||[]))for(const team of [game.away,game.home]){
+      const score=draftKingsScoreboardTeamScore(letters,team);
+      if(score>best){best=score;bestTeam=team;}
     }
-    if(best)hits.push(best);
+    if(best>=60)hits.push({row,letters,score:best,previewTeam:bestTeam});
   }
-
-  const unique=[];
-  const seen=new Set();
-  for(const hit of hits){
-    const key=normalizeTeamName(resolveEspnTeamName(hit.team)||hit.team);
-    if(seen.has(key))continue;
-    seen.add(key);unique.push(hit);
-  }
-  return unique;
+  return hits;
 }
-
 function recoverDraftKingsSettledMatchup(candidate){
   if(!candidate||candidate.sportsbook!=='DraftKings')return null;
   const context=String(candidate.contextText||'');
@@ -2189,8 +2162,8 @@ function recoverDraftKingsSettledMatchup(candidate){
     for(let i=0;i<rowTeams.length;i++){
       for(let j=0;j<rowTeams.length;j++){
         if(i===j)continue;
-        const awayScore=importTeamTextScore(rowTeams[i].team,game.away);
-        const homeScore=importTeamTextScore(rowTeams[j].team,game.home);
+        const awayScore=draftKingsScoreboardTeamScore(rowTeams[i].letters,game.away);
+        const homeScore=draftKingsScoreboardTeamScore(rowTeams[j].letters,game.home);
         if(awayScore<60||homeScore<60)continue;
         const pairScore=awayScore+homeScore;
         if(!bestPair||pairScore>bestPair.pairScore)bestPair={awayScore,homeScore,pairScore,awayRow:rowTeams[i],homeRow:rowTeams[j]};
@@ -2355,8 +2328,7 @@ function buildDraftKingsSettledDiagnostic(candidate){
     }
   }
   const rowTeamHits=scoreboard?extractDraftKingsScoreboardTeams(scoreboard):[];
-  const teamClues=rowTeamHits.slice(0,8).map(x=>({team:x.team,score:x.score}));
-  const rowKeys=new Set(rowTeamHits.map(x=>normalizeTeamName(resolveEspnTeamName(x.team)||x.team)));
+  const teamClues=rowTeamHits.slice(0,8).map(x=>({team:x.letters,score:x.score}));
   const selectedText=String(candidate.rawSelection||candidate.selection||'');
   const pairMatches=[];
   if(rowTeamHits.length>=2){
@@ -2364,8 +2336,8 @@ function buildDraftKingsSettledDiagnostic(candidate){
       let bestPair=0;
       for(let i=0;i<rowTeamHits.length;i++)for(let j=0;j<rowTeamHits.length;j++){
         if(i===j)continue;
-        const a=importTeamTextScore(rowTeamHits[i].team,game.away);
-        const h=importTeamTextScore(rowTeamHits[j].team,game.home);
+        const a=draftKingsScoreboardTeamScore(rowTeamHits[i].letters,game.away);
+        const h=draftKingsScoreboardTeamScore(rowTeamHits[j].letters,game.home);
         if(a>=60&&h>=60)bestPair=Math.max(bestPair,a+h);
       }
       if(bestPair)pairMatches.push({game,score:bestPair});
@@ -2373,10 +2345,8 @@ function buildDraftKingsSettledDiagnostic(candidate){
     pairMatches.sort((a,b)=>b.score-a.score);
   }
   const scored=(state.games||[]).map(game=>{
-    const awayKey=normalizeTeamName(resolveEspnTeamName(game.away)||game.away);
-    const homeKey=normalizeTeamName(resolveEspnTeamName(game.home)||game.home);
-    const awayScore=rowKeys.has(awayKey)?100:0;
-    const homeScore=rowKeys.has(homeKey)?100:0;
+    const awayScore=rowTeamHits.reduce((best,row)=>Math.max(best,draftKingsScoreboardTeamScore(row.letters,game.away)),0);
+    const homeScore=rowTeamHits.reduce((best,row)=>Math.max(best,draftKingsScoreboardTeamScore(row.letters,game.home)),0);
     const selAway=importTeamTextScore(selectedText,game.away);
     const selHome=importTeamTextScore(selectedText,game.home);
     return {game,awayScore,homeScore,selAway,selHome,total:awayScore+homeScore+Math.max(selAway,selHome)};
@@ -2387,7 +2357,7 @@ function buildDraftKingsSettledDiagnostic(candidate){
     contextHasFinal:finalAt>=0,
     boundary,
     scoreboard,
-    scoreboardRows:rowTeamHits.map(x=>`${x.row}  => letters: ${x.letters||''} => matched: ${x.matchedText||''} => ${resolveEspnTeamName(x.team)||x.team} [${x.score}; specificity ${x.specificity}]`),
+    scoreboardRows:rowTeamHits.map(x=>`${x.row}  => letters only: ${x.letters||''}`),
     teamClues:teamClues.map(x=>`${x.team} (${x.score})`),
     pairMatches:pairMatches.slice(0,5).map(x=>`W${x.game.week} ${x.game.away} @ ${x.game.home} | pair ${x.score}`),
     topGames:scored.map(x=>`W${x.game.week} ${x.game.away} @ ${x.game.home} | board ${x.awayScore}/${x.homeScore} | selection ${x.selAway}/${x.selHome}`),
