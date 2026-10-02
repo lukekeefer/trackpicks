@@ -1,7 +1,7 @@
-const BUILD_VERSION = '2.5.5.2';
+const BUILD_VERSION = '2.6';
 let deployedVersion = BUILD_VERSION;
 
-function versionStamp(){ return `V${BUILD_VERSION}`; }
+function versionStamp(){ return 'Version 2'; }
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -3222,7 +3222,7 @@ async function saveScreenshotReview(){
 function importCandidateLabel(c){const sel=c.matchedSelection||c.selection||'Unknown pick';const line=c.betType==='Moneyline'?' ML':Number.isFinite(Number(c.line))?` ${signed(c.line)}`:'';return `${sel}${line}`;}
 function renderScreenshotImportFlow(){
   const f=state.screenshotImportFlow;if(!f)return'';
-  const shell=(title,body,actions)=>`<div class="overlay" style="padding-bottom:calc(82px + env(safe-area-inset-bottom, 0px));align-items:flex-end"><section class="sheet" style="max-height:calc(88vh - 82px);overflow:auto;margin-bottom:0"><div class="close-row"><div><div class="eyebrow">2.5.5.2 Import</div><h2 style="margin:4px 0">${escapeAttr(title)}</h2></div><button class="icon-btn" data-close-import-flow aria-label="Cancel import review">✕</button></div>${body}<div style="display:grid;gap:10px;margin-top:16px">${actions}</div></section></div>`;
+  const shell=(title,body,actions)=>`<div class="overlay" style="padding-bottom:calc(82px + env(safe-area-inset-bottom, 0px));align-items:flex-end"><section class="sheet" style="max-height:calc(88vh - 82px);overflow:auto;margin-bottom:0"><div class="close-row"><div><div class="eyebrow">Version 2 Import</div><h2 style="margin:4px 0">${escapeAttr(title)}</h2></div><button class="icon-btn" data-close-import-flow aria-label="Cancel import review">✕</button></div>${body}<div style="display:grid;gap:10px;margin-top:16px">${actions}</div></section></div>`;
   if(f.stage==='ready'){
     const body=`<p>Confirm these ${f.ready.length} complete wager${f.ready.length===1?'':'s'} together before TrackPicks adds them to your Slip.</p><div class="parsed-bets-list">${f.ready.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div><div>${escapeAttr(signed(c.odds))} · ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u</div></div>`).join('')}</div>`;
     return shell('Ready for Slip',body,`<button class="primary" data-confirm-ready-import ${f.saving?'disabled':''}>${f.saving?'Adding…':`Confirm All & Add ${f.ready.length} to Slip`}</button><button class="secondary" data-cancel-import-flow>Cancel</button>`);
