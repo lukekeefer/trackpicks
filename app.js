@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.16.2';
+const BUILD_VERSION = '2.5.4.16.3';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -2074,46 +2074,76 @@ function canonicalImportSelectionForMatchedGame(candidate,game){
   return '';
 }
 
+function extractDraftKingsScoreboardTeams(scoreboard){
+  // 2.5.4.16.3: settled DK scoreboards are row-oriented. OCR can make a
+  // shorter school name ("Michigan") appear to match inside a longer one
+  // ("Western Michigan"), so resolve each scoreboard ROW independently and
+  // prefer the most specific/longest team form on that row.
+  const rows=String(scoreboard||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  const teamNames=[...new Set((state.games||[]).flatMap(g=>[g.away,g.home]).filter(Boolean))];
+  const hits=[];
+  for(const row of rows){
+    if(/^Final\b/i.test(row)||/^<?\s*Share\b/i.test(row))continue;
+    const normalizedRow=normalizeImportTeamText(row);
+    if(!normalizedRow)continue;
+    let best=null;
+    for(const team of teamNames){
+      const score=importTeamTextScore(row,team);
+      if(score<88)continue;
+      const forms=importTeamForms(team).filter(form=>(` ${normalizedRow} `).includes(` ${form} `));
+      const specificity=forms.reduce((m,form)=>Math.max(m,form.length),0);
+      if(!specificity)continue;
+      const candidate={team,score,specificity,row};
+      if(!best || candidate.specificity>best.specificity || (candidate.specificity===best.specificity&&candidate.score>best.score))best=candidate;
+    }
+    if(best)hits.push(best);
+  }
+  const unique=[];
+  const seen=new Set();
+  for(const hit of hits){
+    const key=normalizeTeamName(resolveEspnTeamName(hit.team)||hit.team);
+    if(seen.has(key))continue;
+    seen.add(key);unique.push(hit);
+  }
+  return unique;
+}
+
 function recoverDraftKingsSettledMatchup(candidate){
   if(!candidate||candidate.sportsbook!=='DraftKings')return null;
   const context=String(candidate.contextText||'');
   const finalAt=context.search(/\bFinal\b/i);
   if(finalAt<0)return null;
 
-  // 2.5.4.16: a settled DK card has a deterministic scoreboard container:
-  // everything after "Final Q1 Q2 Q3 Q4 T" and before "Share" belongs to
-  // THIS ticket. Treat that block as matchup identity before using any broader
-  // card context. This is intentionally independent of a normal "A @ B" row,
-  // because settled DK cards frequently do not show one.
   let scoreboard=context.slice(finalAt);
   const shareAt=scoreboard.search(/\n\s*<?\s*Share\b/i);
   if(shareAt>0)scoreboard=scoreboard.slice(0,shareAt);
   else{
-    // Fallback boundary if OCR loses Share. Never cross into ticket metadata or
-    // the next DraftKings card.
     const stop=scoreboard.search(/\n\s*(?:Bet\s*(?:Bet\s*)?ID\b|DRAFTKINGS\b|ORAFTKINGS\b)/i);
     if(stop>0)scoreboard=scoreboard.slice(0,stop);
   }
 
-  // Score each known game ONLY against the Final->Share scoreboard. Requiring
-  // both teams prevents a selected-team-only false positive. Selection identity
-  // is scored separately so OCR such as "a Oregon -3" still canonicalizes to
-  // the TrackPicks team name after the game is recovered.
+  // 2.5.4.16.3: derive the matchup from the two team rows between Final and
+  // Share, then hand that canonical pair to the existing game matcher. This
+  // avoids whole-block substring collisions such as Michigan inside Western
+  // Michigan and still tolerates mangled quarter/score digits around the name.
+  const rowTeams=extractDraftKingsScoreboardTeams(scoreboard);
+  const rowKeys=new Set(rowTeams.map(x=>normalizeTeamName(resolveEspnTeamName(x.team)||x.team)));
   const selectedText=String(candidate.rawSelection||candidate.selection||'');
   const hits=[];
   for(const game of (state.games||[])){
-    const awayScore=importTeamTextScore(scoreboard,game.away);
-    const homeScore=importTeamTextScore(scoreboard,game.home);
-    if(awayScore<88||homeScore<88)continue;
+    const awayKey=normalizeTeamName(resolveEspnTeamName(game.away)||game.away);
+    const homeKey=normalizeTeamName(resolveEspnTeamName(game.home)||game.home);
+    if(!rowKeys.has(awayKey)||!rowKeys.has(homeKey))continue;
     const selAway=importTeamTextScore(selectedText,game.away);
     const selHome=importTeamTextScore(selectedText,game.home);
     const selectionScore=Math.max(selAway,selHome);
     if(candidate.betType!=='Total'&&selectionScore<60)continue;
     hits.push({
       game,
-      score:awayScore+homeScore+selectionScore,
+      score:200+selectionScore,
       selectionTeam:candidate.betType==='Total'?null:(selAway>=selHome?game.away:game.home),
-      scoreboardText:scoreboard
+      scoreboardText:scoreboard,
+      rowTeams
     });
   }
   hits.sort((a,b)=>b.score-a.score);
@@ -2254,11 +2284,15 @@ function buildDraftKingsSettledDiagnostic(candidate){
       else boundary='end of candidate context';
     }
   }
-  const teamClues=scoreboard?extractImportTeamClues(scoreboard).slice(0,8):[];
+  const rowTeamHits=scoreboard?extractDraftKingsScoreboardTeams(scoreboard):[];
+  const teamClues=rowTeamHits.slice(0,8).map(x=>({team:x.team,score:x.score}));
+  const rowKeys=new Set(rowTeamHits.map(x=>normalizeTeamName(resolveEspnTeamName(x.team)||x.team)));
   const selectedText=String(candidate.rawSelection||candidate.selection||'');
   const scored=(state.games||[]).map(game=>{
-    const awayScore=scoreboard?importTeamTextScore(scoreboard,game.away):0;
-    const homeScore=scoreboard?importTeamTextScore(scoreboard,game.home):0;
+    const awayKey=normalizeTeamName(resolveEspnTeamName(game.away)||game.away);
+    const homeKey=normalizeTeamName(resolveEspnTeamName(game.home)||game.home);
+    const awayScore=rowKeys.has(awayKey)?100:0;
+    const homeScore=rowKeys.has(homeKey)?100:0;
     const selAway=importTeamTextScore(selectedText,game.away);
     const selHome=importTeamTextScore(selectedText,game.home);
     return {game,awayScore,homeScore,selAway,selHome,total:awayScore+homeScore+Math.max(selAway,selHome)};
@@ -2269,6 +2303,7 @@ function buildDraftKingsSettledDiagnostic(candidate){
     contextHasFinal:finalAt>=0,
     boundary,
     scoreboard,
+    scoreboardRows:rowTeamHits.map(x=>`${x.row}  =>  ${resolveEspnTeamName(x.team)||x.team} [${x.score}; specificity ${x.specificity}]`),
     teamClues:teamClues.map(x=>`${x.team} (${x.score})`),
     topGames:scored.map(x=>`W${x.game.week} ${x.game.away} @ ${x.game.home} | board ${x.awayScore}/${x.homeScore} | selection ${x.selAway}/${x.selHome}`),
     recoveredSelection:String(candidate.dkRecoveredSelection||''),
@@ -3036,6 +3071,8 @@ Event before/after recovery: ${escapeAttr(d.trace.eventText||'(empty)')}
 Final detected: ${d.trace.contextHasFinal?'YES':'NO'}
 Scoreboard boundary: ${escapeAttr(d.trace.boundary||'none')}
 Teams recognized: ${escapeAttr((d.trace.teamClues||[]).join(' | ')||'none')}
+Scoreboard row resolution:
+${escapeAttr((d.trace.scoreboardRows||[]).join('\n')||'none')}
 Recovered selection: ${escapeAttr(d.trace.recoveredSelection||'none')}
 Match status: ${escapeAttr(d.trace.matchStatus||'none')}
 Matched game: ${escapeAttr(d.trace.matchedGame||'none')}
