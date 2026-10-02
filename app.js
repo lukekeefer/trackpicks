@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.5.4.16';
+const BUILD_VERSION = '2.5.4.16.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `V${BUILD_VERSION}`; }
@@ -2234,6 +2234,46 @@ function matchScreenshotCandidatesToImportWeek(candidates){
   return (candidates||[]).map(c=>matchScreenshotCandidateToWeek(c,week));
 }
 
+function buildDraftKingsSettledDiagnostic(candidate){
+  if(!candidate||candidate.sportsbook!=='DraftKings')return null;
+  const context=String(candidate.contextText||'');
+  const finalAt=context.search(/\bFinal\b/i);
+  let scoreboard='';
+  let boundary='none';
+  if(finalAt>=0){
+    scoreboard=context.slice(finalAt);
+    const shareAt=scoreboard.search(/\n\s*<?\s*Share\b/i);
+    if(shareAt>0){scoreboard=scoreboard.slice(0,shareAt);boundary='Share';}
+    else{
+      const stop=scoreboard.search(/\n\s*(?:Bet\s*(?:Bet\s*)?ID\b|DRAFTKINGS\b|ORAFTKINGS\b)/i);
+      if(stop>0){scoreboard=scoreboard.slice(0,stop);boundary='next ticket';}
+      else boundary='end of candidate context';
+    }
+  }
+  const teamClues=scoreboard?extractImportTeamClues(scoreboard).slice(0,8):[];
+  const selectedText=String(candidate.rawSelection||candidate.selection||'');
+  const scored=(state.games||[]).map(game=>{
+    const awayScore=scoreboard?importTeamTextScore(scoreboard,game.away):0;
+    const homeScore=scoreboard?importTeamTextScore(scoreboard,game.home):0;
+    const selAway=importTeamTextScore(selectedText,game.away);
+    const selHome=importTeamTextScore(selectedText,game.home);
+    return {game,awayScore,homeScore,selAway,selHome,total:awayScore+homeScore+Math.max(selAway,selHome)};
+  }).filter(x=>x.awayScore>0||x.homeScore>0||x.selAway>0||x.selHome>0).sort((a,b)=>b.total-a.total).slice(0,5);
+  return {
+    selection:selectedText,
+    eventText:String(candidate.eventText||''),
+    contextHasFinal:finalAt>=0,
+    boundary,
+    scoreboard,
+    teamClues:teamClues.map(x=>`${x.team} (${x.score})`),
+    topGames:scored.map(x=>`W${x.game.week} ${x.game.away} @ ${x.game.home} | board ${x.awayScore}/${x.homeScore} | selection ${x.selAway}/${x.selHome}`),
+    recoveredSelection:String(candidate.dkRecoveredSelection||''),
+    matchStatus:String(candidate.matchStatus||''),
+    matchedGame:candidate.matchedAway&&candidate.matchedHome?`${candidate.matchedAway} @ ${candidate.matchedHome}`:'',
+    detectedWeek:candidate.detectedWeek??candidate.matchedWeek??''
+  };
+}
+
 function buildScreenshotParserDiagnostic(item,prepared,rawText,candidates){
   const normalized=normalizeOcrBetText(rawText||'');
   const detectedSportsbook=detectScreenshotSportsbook(normalized);
@@ -2268,6 +2308,7 @@ function buildScreenshotParserDiagnostic(item,prepared,rawText,candidates){
     moneylineCandidateCount:(candidates||[]).filter(c=>c.betType==='Moneyline').length,
     totalCandidateCount:(candidates||[]).filter(c=>c.betType==='Total').length,
     compactCandidates:compactCandidates.map(c=>({rawSelection:c.rawSelection||'',selection:c.selection||'',betType:c.betType||'',line:c.line,odds:c.odds,stakeUsd:c.stakeUsd,possibleWinningsUsd:c.possibleWinningsUsd})),
+    dkSettledDiagnostics:(candidates||[]).map((c,i)=>({index:i+1,trace:buildDraftKingsSettledDiagnostic(c)})).filter(x=>x.trace),
     compactError,reason,ocrText:normalized
   };
 }
@@ -2986,7 +3027,21 @@ function renderScreenshotImporter(){
     return `<article class="screenshot-review-card ${item.candidates?.length?'has-results':''}">
       <div class="screenshot-thumb-wrap">${item.preview?`<img src="${escapeAttr(item.preview)}" class="screenshot-thumb" alt="Screenshot ${index+1}">`:'<div class="screenshot-thumb-error">Image unavailable</div>'}</div>
       <div class="screenshot-review-copy"><div class="screenshot-review-top"><strong>Screenshot ${index+1}</strong><span class="import-status-chip ${item.status==='Parsing'?'working':''}">${escapeAttr(status)}</span></div><div class="screenshot-file-name">${escapeAttr(item.fileName)}</div>${item.status==='Parsing'?`<div class="import-progress"><span style="width:${Number(item.progress)||0}%"></span></div>`:''}<div class="screenshot-review-note">${item.candidates?.length?'Parsed locally. Review the detected wager details below.':'Ready for wager parsing. No bet will be added to your Slip until you approve it.'}</div>${item.error?`<div class="parsed-bet-warning">${escapeAttr(item.error)}</div>`:''}</div>
-      ${item.parserDiagnostic?`<details class="parser-debug-panel" open><summary>Parser diagnostics · ${escapeAttr(item.parserDiagnostic.reason)}</summary><div class="parser-debug-grid"><span>Build</span><strong>${escapeAttr(item.parserDiagnostic.build)}</strong><span>Source</span><strong>${escapeAttr(item.parserDiagnostic.source)}</strong><span>Prepared</span><strong>${escapeAttr(item.parserDiagnostic.prepared)}</strong><span>Scale / ratio</span><strong>${escapeAttr(String(item.parserDiagnostic.scale))}× / ${escapeAttr(String(item.parserDiagnostic.ratio))}</strong><span>Layout route</span><strong>${escapeAttr(item.parserDiagnostic.layoutHint)}</strong><span>Sportsbook</span><strong>${escapeAttr(item.parserDiagnostic.detectedSportsbook)}</strong><span>OCR chars</span><strong>${escapeAttr(String(item.parserDiagnostic.normalizedCharCount))}</strong><span>Timestamps</span><strong>${escapeAttr(String(item.parserDiagnostic.timestampCount))}</strong><span>Odds tokens</span><strong>${escapeAttr((item.parserDiagnostic.americanOdds||[]).join(', ')||'none')}</strong><span>Money tokens</span><strong>${escapeAttr((item.parserDiagnostic.moneyTokens||[]).join(', ')||'none')}</strong><span>Compact candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.compactCandidateCount))}</strong><span>Wager anchors</span><strong>${escapeAttr(String(item.parserDiagnostic.wagerAnchorCount??item.parserDiagnostic.finalCandidateCount))}</strong><span>Spread candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.spreadCandidateCount??0))}</strong><span>Moneyline candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.moneylineCandidateCount??0))}</strong><span>Total candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.totalCandidateCount??0))}</strong><span>Final candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.finalCandidateCount))}</strong></div>${(item.parserDiagnostic.compactCandidates||[]).map((c,i)=>`<div class="parser-debug-candidate"><div class="parser-debug-label">Compact candidate ${i+1}</div><pre class="parser-debug-text">Raw selection: ${escapeAttr(c.rawSelection||'(empty)')}\nNormalized selection: ${escapeAttr(c.selection||'(empty)')}\nType: ${escapeAttr(c.betType||'')}\nLine: ${escapeAttr(String(c.line??'none'))}\nOdds: ${escapeAttr(String(c.odds??'none'))}\nMoney: ${escapeAttr(String(c.stakeUsd??'none'))} / ${escapeAttr(String(c.possibleWinningsUsd??'none'))}</pre></div>`).join('')}${item.parserDiagnostic.compactError?`<div class="parsed-bet-warning">Compact parser error: ${escapeAttr(item.parserDiagnostic.compactError)}</div>`:''}<div class="parser-debug-label">OCR text reaching parser</div><pre class="parser-debug-text">${escapeAttr(item.parserDiagnostic.ocrText||'(empty)')}</pre></details>`:''}
+      ${item.parserDiagnostic?`<details class="parser-debug-panel" open><summary>Parser diagnostics · ${escapeAttr(item.parserDiagnostic.reason)}</summary><div class="parser-debug-grid"><span>Build</span><strong>${escapeAttr(item.parserDiagnostic.build)}</strong><span>Source</span><strong>${escapeAttr(item.parserDiagnostic.source)}</strong><span>Prepared</span><strong>${escapeAttr(item.parserDiagnostic.prepared)}</strong><span>Scale / ratio</span><strong>${escapeAttr(String(item.parserDiagnostic.scale))}× / ${escapeAttr(String(item.parserDiagnostic.ratio))}</strong><span>Layout route</span><strong>${escapeAttr(item.parserDiagnostic.layoutHint)}</strong><span>Sportsbook</span><strong>${escapeAttr(item.parserDiagnostic.detectedSportsbook)}</strong><span>OCR chars</span><strong>${escapeAttr(String(item.parserDiagnostic.normalizedCharCount))}</strong><span>Timestamps</span><strong>${escapeAttr(String(item.parserDiagnostic.timestampCount))}</strong><span>Odds tokens</span><strong>${escapeAttr((item.parserDiagnostic.americanOdds||[]).join(', ')||'none')}</strong><span>Money tokens</span><strong>${escapeAttr((item.parserDiagnostic.moneyTokens||[]).join(', ')||'none')}</strong><span>Compact candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.compactCandidateCount))}</strong><span>Wager anchors</span><strong>${escapeAttr(String(item.parserDiagnostic.wagerAnchorCount??item.parserDiagnostic.finalCandidateCount))}</strong><span>Spread candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.spreadCandidateCount??0))}</strong><span>Moneyline candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.moneylineCandidateCount??0))}</strong><span>Total candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.totalCandidateCount??0))}</strong><span>Final candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.finalCandidateCount))}</strong></div>${(item.parserDiagnostic.compactCandidates||[]).map((c,i)=>`<div class="parser-debug-candidate"><div class="parser-debug-label">Compact candidate ${i+1}</div><pre class="parser-debug-text">Raw selection: ${escapeAttr(c.rawSelection||'(empty)')}\nNormalized selection: ${escapeAttr(c.selection||'(empty)')}\nType: ${escapeAttr(c.betType||'')}\nLine: ${escapeAttr(String(c.line??'none'))}\nOdds: ${escapeAttr(String(c.odds??'none'))}\nMoney: ${escapeAttr(String(c.stakeUsd??'none'))} / ${escapeAttr(String(c.possibleWinningsUsd??'none'))}</pre></div>`).join('')}${item.parserDiagnostic.compactError?`<div class="parsed-bet-warning">Compact parser error: ${escapeAttr(item.parserDiagnostic.compactError)}</div>`:''}${(item.parserDiagnostic.dkSettledDiagnostics||[]).map(d=>`<div class="parser-debug-candidate"><div class="parser-debug-label">DK settled trace · Bet ${d.index}</div><pre class="parser-debug-text">Selection: ${escapeAttr(d.trace.selection||'(empty)')}
+Event before/after recovery: ${escapeAttr(d.trace.eventText||'(empty)')}
+Final detected: ${d.trace.contextHasFinal?'YES':'NO'}
+Scoreboard boundary: ${escapeAttr(d.trace.boundary||'none')}
+Teams recognized: ${escapeAttr((d.trace.teamClues||[]).join(' | ')||'none')}
+Recovered selection: ${escapeAttr(d.trace.recoveredSelection||'none')}
+Match status: ${escapeAttr(d.trace.matchStatus||'none')}
+Matched game: ${escapeAttr(d.trace.matchedGame||'none')}
+Detected/matched week: ${escapeAttr(String(d.trace.detectedWeek||'none'))}
+
+FINAL → SHARE BLOCK
+${escapeAttr(d.trace.scoreboard||'(none)')}
+
+TOP TRACKPICKS GAME SCORES
+${escapeAttr((d.trace.topGames||[]).join('\n')||'none')}</pre></div>`).join('')}<div class="parser-debug-label">OCR text reaching parser</div><pre class="parser-debug-text">${escapeAttr(item.parserDiagnostic.ocrText||'(empty)')}</pre></details>`:''}
       ${candidates?`<div class="parsed-bets-list">${candidates}</div>`:''}
     </article>`;
   }).join(''):`<div class="screenshot-import-empty"><strong>No screenshots selected yet.</strong><span>Select one or many sportsbook screenshots to start a review batch.</span></div>`;
