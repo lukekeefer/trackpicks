@@ -1,4 +1,4 @@
-const TRACKPICKS_SW_VERSION = '3.0.0-logo-cache-1';
+const TRACKPICKS_SW_VERSION = '2.7-logo-cache-1';
 const TEAM_LOGO_CACHE = `trackpicks-team-logos-${TRACKPICKS_SW_VERSION}`;
 const TEAM_LOGO_URLS = [
   'https://a.espncdn.com/i/teamlogos/ncaa/500/103.png',

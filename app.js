@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.6.1';
+const BUILD_VERSION = '2.7';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return 'Version 2'; }
@@ -28,7 +28,7 @@ async function refreshCanonicalApp(latestVersion){
   try{
     if('caches' in window){
       const keys=await caches.keys();
-      await Promise.all(keys.map(k=>caches.delete(k)));
+      await Promise.all(keys.filter(k=>!k.startsWith('trackpicks-team-logos-')).map(k=>caches.delete(k)));
     }
   }catch(_){/* Best effort only. */}
 
@@ -231,17 +231,34 @@ function teamMonogram(name){
   if(!words.length)return'TP';
   return words.slice(0,2).map(w=>w[0]).join('').toUpperCase();
 }
+let teamLogoPreloadPromise=null;
+function preloadTeamLogos(){
+  if(teamLogoPreloadPromise)return teamLogoPreloadPromise;
+  const urls=[...new Set((state.cfbTeams||[]).map(t=>String(t.logoUrl||'').trim()).filter(Boolean))];
+  teamLogoPreloadPromise=Promise.allSettled(urls.map(url=>new Promise(resolve=>{
+    const img=new Image();
+    img.decoding='sync';
+    img.onload=()=>resolve(true);
+    img.onerror=()=>resolve(false);
+    img.src=url;
+    if(img.complete)resolve(true);
+  })));
+  return teamLogoPreloadPromise;
+}
+function logoImg(className,url,alt=''){
+  return `<img class="${className}" src="${escapeAttr(url)}" alt="${escapeAttr(alt)}" loading="eager" decoding="sync" fetchpriority="high">`;
+}
 function renderTeamLogo(name){
   const meta=teamMetaFor(name);
   if(meta?.logoUrl){
-    return `<img class="matchup-logo" src="${escapeAttr(meta.logoUrl)}" alt="${escapeAttr(name)} logo" loading="lazy">`;
+    return logoImg('matchup-logo',meta.logoUrl,`${name} logo`);
   }
   return `<div class="matchup-logo matchup-logo-fallback" aria-hidden="true">${escapeAttr(meta?.abbreviation||teamMonogram(name))}</div>`;
 }
 function renderMiniTeamLogo(name){
   const meta=teamMetaFor(name);
   if(meta?.logoUrl){
-    return `<img class="wager-team-logo" src="${escapeAttr(meta.logoUrl)}" alt="" loading="lazy">`;
+    return logoImg('wager-team-logo',meta.logoUrl,'');
   }
   return `<div class="wager-team-logo wager-team-logo-fallback" aria-hidden="true">${escapeAttr(meta?.abbreviation||teamMonogram(name))}</div>`;
 }
@@ -894,6 +911,8 @@ async function syncFromCloud(){
     state.wagers=(wagersRes.data||[]).map(fromDbWager);
     state.cautionGameIds=(flagsRes.data||[]).map(r=>r.game_id);
     state.cfbTeams=(teamsRes.data||[]).map(r=>({espnName:r.espn_name,espnTeamId:r.espn_team_id||'',conference:r.conference,subdivision:r.subdivision,season:r.season,abbreviation:r.abbreviation||'',logoUrl:r.logo_url||'',shortDisplayName:r.short_display_name||'',shortNickname:r.short_nickname||'',smallerFont:!!r.smaller_font,smallerNicknameFont:!!r.smaller_nickname_font,extraSmallNicknameFont:!!r.extra_small_nickname_font}));
+    teamLogoPreloadPromise=null;
+    const logoWarmup=preloadTeamLogos();
     state.cfbAliases=(aliasesRes.data||[]).map(r=>({provider:r.provider,alias:r.alias,espnName:r.espn_name}));
     state.cfbRankings=(rankingsRes.data||[]).map(r=>({season:Number(r.season),week:Number(r.week),pollType:r.poll_type,pollName:r.poll_name,rank:Number(r.rank),teamId:String(r.team_id),publishedAt:r.published_at||null}));
     const historyRes=await fetchAllOddsHistory();
@@ -904,6 +923,7 @@ async function syncFromCloud(){
     ]);
     state.parlays=parlaysRes.error?[]:(parlaysRes.data||[]).map(fromDbParlay);
     state.parlayLegs=parlayLegsRes.error?[]:(parlayLegsRes.data||[]).map(fromDbParlayLeg);
+    await logoWarmup;
   }catch(err){ state.importMessage=`Sync failed: ${err.message||err}`; }
   finally{ state.syncing=false; }
 }
@@ -1053,7 +1073,7 @@ function renderSlateTeamHero(name,side){
   const smallerMascot=!!(meta?.smallerNicknameFont||meta?.smaller_nickname_font);
   const extraSmallMascot=!!(meta?.extraSmallNicknameFont||meta?.extra_small_nickname_font);
   const logo=meta?.logoUrl
-    ? `<img class="slate-team-logo" src="${escapeAttr(meta.logoUrl)}" alt="" loading="lazy">`
+    ? logoImg('slate-team-logo',meta.logoUrl,'')
     : `<div class="slate-team-logo slate-team-logo-fallback" aria-hidden="true">${escapeAttr(abbr)}</div>`;
   return `<div class="slate-team slate-team-${side}${smallerSchool?' slate-team-smaller-font':''}${smallerMascot?' slate-team-smaller-nickname':''}${extraSmallMascot?' slate-team-extra-small-nickname':''}" data-team-name="${escapeAttr(name)}" data-short-name="${escapeAttr(shortName)}">
     ${logo}
@@ -1080,7 +1100,7 @@ function renderSlateSpreadBlock(g,signals){
   const meta=teamMetaFor(team);
   const abbr=meta?.abbreviation||teamMonogram(team);
   const logo=meta?.logoUrl
-    ? `<img class="slate-market-logo" src="${escapeAttr(meta.logoUrl)}" alt="" loading="lazy">`
+    ? logoImg('slate-market-logo',meta.logoUrl,'')
     : `<span class="slate-market-logo slate-market-logo-fallback">${escapeAttr(abbr)}</span>`;
   return `<div class="slate-market-box slate-spread-box">
     <span class="slate-market-value">${logo}<span class="slate-market-abbr">${escapeAttr(abbr)}</span><strong>${signed(line)}</strong>${renderMovementArrow(signals.spread,team)}</span>
@@ -2909,7 +2929,7 @@ function renderTeamScreen(){
   const teamName=meta?.espnName||state.activeTeamName||'Team';
   const display=splitSlateTeamName(teamName);
   const logo=meta?.logoUrl
-    ? `<img class="team-page-logo" src="${escapeAttr(meta.logoUrl)}" alt="${escapeAttr(teamName)} logo">`
+    ? logoImg('team-page-logo',meta.logoUrl,`${teamName} logo`)
     : `<div class="team-page-logo team-page-logo-fallback">${escapeAttr(meta?.abbreviation||teamMonogram(teamName))}</div>`;
   const rec=teamScreenRecord(teamId);
   const overall=rec.ties?`${rec.wins}-${rec.losses}-${rec.ties}`:`${rec.wins}-${rec.losses}`;
