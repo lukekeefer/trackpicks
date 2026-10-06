@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.5';
+const BUILD_VERSION = '3.0.6';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -1650,12 +1650,11 @@ function parseMarketHeaderNear(lines,marketIndex,market){
       // preferred; an unsigned 3/4 digit token is retained as uncertain, not guessed.
       const signed=[...statusless.matchAll(/(?:^|\s)([+-]\d{3,4})(?=\s|$)/g)].pop();
       const unsigned=!signed?[...statusless.matchAll(/(?:^|\s)(\d{3,4})(?=\s|$)/g)].pop():null;
-      // 2.9.13: preserve the sportsbook's literal selection text here. Do not
-      // globally canonicalize a header before we know its matched game; e.g.
-      // "Ohio State" must remain "Ohio State", not become "Ohio Bobcats".
-      const cut=(signed||unsigned)?.index;
-      let selection=cleanSelectionName(cut==null?statusless:statusless.slice(0,cut));
-      if(!selection)selection=knownTeam;
+      let selection=knownTeam;
+      if(!selection){
+        const cut=(signed||unsigned)?.index;
+        selection=cleanSelectionName(cut==null?statusless:statusless.slice(0,cut));
+      }
       if(selection){
         return {index:i,selection,line:null,odds:signed?Number(signed[1]):null,rawOddsToken:unsigned?unsigned[1]:'',oddsNeedsReview:!!unsigned};
       }
@@ -1666,9 +1665,7 @@ function parseMarketHeaderNear(lines,marketIndex,market){
       if(!spreadMatches.length)continue;
       const sm=spreadMatches[0];
       const line=normalizeParsedSpreadLine(sm[1].replace(/\s+/g,''),'card');
-      // 2.9.13: same invariant for spreads: keep the literal sportsbook side
-      // until game-aware reconciliation can constrain it to one of the two teams.
-      let selection=cleanSelectionName(statusless.slice(0,sm.index))||knownTeam;
+      let selection=knownTeam||cleanSelectionName(statusless.slice(0,sm.index));
       if(!selection)continue;
       const after=statusless.slice((sm.index||0)+sm[0].length);
       const signed=after.match(/(?:^|\s|[|Il•·])([+-]\d{3,4})(?=\s|$)/);
@@ -1959,54 +1956,6 @@ function importTeamForms(teamName){
   return [...forms].sort((a,b)=>b.length-a.length);
 }
 
-function importOcrConfusablePhraseMatch(text,form){
-  // 2.9.3: OCR commonly reads an uppercase I as lowercase l ("Iowa" -> "lowa").
-  // Treat that as a strong match only when every other character in the phrase agrees.
-  // This is deliberately generic and phrase-scoped; it is not a BYU/Iowa exception.
-  const a=normalizeImportTeamText(text).split(' ').filter(Boolean);
-  const b=normalizeImportTeamText(form).split(' ').filter(Boolean);
-  if(!a.length||!b.length||a.length<b.length)return false;
-  const tokenMatch=(x,y)=>{
-    if(x===y)return true;
-    if(x.length!==y.length||x.length<2)return false;
-    let diffs=0;
-    for(let i=0;i<x.length;i++){
-      if(x[i]===y[i])continue;
-      if(i===0 && ((x[i]==='l'&&y[i]==='i')||(x[i]==='i'&&y[i]==='l'))){diffs++;continue;}
-      return false;
-    }
-    return diffs===1;
-  };
-  for(let start=0;start<=a.length-b.length;start++){
-    let ok=true;
-    for(let i=0;i<b.length;i++)if(!tokenMatch(a[start+i],b[i])){ok=false;break;}
-    if(ok)return true;
-  }
-  return false;
-}
-
-function importOcrSchoolPrefixMatch(text,form){
-  // 2.9.5: sportsbook event rows often use the school name while TrackPicks stores
-  // the full ESPN name including mascot ("Iowa State" vs "Iowa State Cyclones").
-  // Compare the OCR phrase against the leading canonical tokens and allow the same
-  // first-letter I/l OCR confusion handled by importOcrConfusablePhraseMatch.
-  const a=normalizeImportTeamText(text).split(' ').filter(Boolean);
-  const b=normalizeImportTeamText(form).split(' ').filter(Boolean);
-  if(a.length<2 || b.length<=a.length)return false;
-  const tokenMatch=(x,y)=>{
-    if(x===y)return true;
-    if(x.length!==y.length||x.length<2)return false;
-    let diffs=0;
-    for(let i=0;i<x.length;i++){
-      if(x[i]===y[i])continue;
-      if(i===0 && ((x[i]==='l'&&y[i]==='i')||(x[i]==='i'&&y[i]==='l'))){diffs++;continue;}
-      return false;
-    }
-    return diffs===1;
-  };
-  return a.every((token,i)=>tokenMatch(token,b[i]));
-}
-
 function importTeamTextScore(text,teamName){
   const t=normalizeImportTeamText(text);
   if(!t)return 0;
@@ -2100,19 +2049,6 @@ function extractImportMatchupPair(text){
   return away&&home?{away,home}:null;
 }
 
-function importTruncatedTeamSideScore(text,teamName){
-  const raw=normalizeImportTeamText(text).replace(/\s+/g,' ').trim();
-  if(raw.length<4)return 0;
-  let best=0;
-  for(const form of importTeamForms(teamName)){
-    // Sportsbook rows often end in an OCR/UI ellipsis (Kans..., North Caro...).
-    // A four+ character leading fragment is safe only as matchup-side evidence;
-    // it is never used by itself to choose a wager selection.
-    if(form.startsWith(raw) && form.length>raw.length)best=Math.max(best,86);
-  }
-  return best;
-}
-
 function directImportMatchupForGame(candidate,game){
   const sources=[candidate?.eventText,candidate?.contextText].filter(Boolean);
   for(const source of sources){
@@ -2156,39 +2092,6 @@ function bestImportGameMatch(candidate,games){
   const best=ranked[0],second=ranked[1];
   const confident=best.score>=156 && (!second || best.score-second.score>=18 || best.score>=250);
   return confident?best:null;
-}
-
-function buildImportReconciliationDiagnostic(candidate,activeWeek){
-  const pair=extractImportMatchupPair(candidate?.eventText||'');
-  const games=weekGames(Number(activeWeek));
-  const tested=games.map(game=>{
-    const pairAway=pair?Math.max(importTeamTextScore(pair.away,game.away),importTruncatedTeamSideScore(pair.away,game.away)):0;
-    const pairHome=pair?Math.max(importTeamTextScore(pair.home,game.home),importTruncatedTeamSideScore(pair.home,game.home)):0;
-    const selAway=importTeamTextScore(candidate?.selection||'',game.away);
-    const selHome=importTeamTextScore(candidate?.selection||'',game.home);
-    const direct=directImportMatchupForGame(candidate,game);
-    const scored=scoreImportCandidateForGame(candidate,game);
-    return {
-      gameId:game.id,away:game.away,home:game.home,
-      pairAway,pairHome,selAway,selHome,
-      directScore:direct?.score||0,normalScore:scored?.score||0,
-      selectionTeam:direct?.selectionTeam||scored?.selectionTeam||''
-    };
-  }).sort((a,b)=>Math.max(b.directScore,b.normalScore,b.pairAway+b.pairHome)-Math.max(a.directScore,a.normalScore,a.pairAway+a.pairHome)).slice(0,5);
-  const bestDirect=tested.reduce((m,x)=>Math.max(m,x.directScore),0);
-  const bestNormal=tested.reduce((m,x)=>Math.max(m,x.normalScore),0);
-  let reason='No Week '+activeWeek+' game met the reconciliation threshold.';
-  if(pair && tested.length){
-    const top=tested[0];
-    if(top.pairAway<78||top.pairHome<78)reason=`Explicit matchup failed side threshold (away ${top.pairAway}/78, home ${top.pairHome}/78).`;
-    else if(!bestDirect)reason='Explicit matchup sides looked plausible but direct matchup resolution did not produce a unique match.';
-  }
-  return {
-    parsedAway:pair?.away||'',parsedHome:pair?.home||'',
-    normalizedAway:pair?normalizeImportTeamText(pair.away):'',normalizedHome:pair?normalizeImportTeamText(pair.home):'',
-    selection:candidate?.selection||'',normalizedSelection:normalizeImportTeamText(candidate?.selection||''),
-    activeWeek:Number(activeWeek),bestDirect,bestNormal,reason,tested
-  };
 }
 
 function canonicalImportSelectionForMatchedGame(candidate,game){
@@ -2668,6 +2571,399 @@ async function addPickerName(name){
 
   state.pickerNames=next;
   return {ok:true};
+}
+
+function buildImportReconciliationDiagnostic(candidate,activeWeek){
+  const pair=extractImportMatchupPair(candidate?.eventText||'');
+  const games=weekGames(Number(activeWeek));
+  const tested=games.map(game=>{
+    const pairAway=pair?Math.max(importTeamTextScore(pair.away,game.away),importTruncatedTeamSideScore(pair.away,game.away)):0;
+    const pairHome=pair?Math.max(importTeamTextScore(pair.home,game.home),importTruncatedTeamSideScore(pair.home,game.home)):0;
+    const selAway=importTeamTextScore(candidate?.selection||'',game.away);
+    const selHome=importTeamTextScore(candidate?.selection||'',game.home);
+    const direct=directImportMatchupForGame(candidate,game);
+    const scored=scoreImportCandidateForGame(candidate,game);
+    return {
+      gameId:game.id,away:game.away,home:game.home,
+      pairAway,pairHome,selAway,selHome,
+      directScore:direct?.score||0,normalScore:scored?.score||0,
+      selectionTeam:direct?.selectionTeam||scored?.selectionTeam||''
+    };
+  }).sort((a,b)=>Math.max(b.directScore,b.normalScore,b.pairAway+b.pairHome)-Math.max(a.directScore,a.normalScore,a.pairAway+a.pairHome)).slice(0,5);
+  const bestDirect=tested.reduce((m,x)=>Math.max(m,x.directScore),0);
+  const bestNormal=tested.reduce((m,x)=>Math.max(m,x.normalScore),0);
+  let reason='No Week '+activeWeek+' game met the reconciliation threshold.';
+  if(pair && tested.length){
+    const top=tested[0];
+    if(top.pairAway<78||top.pairHome<78)reason=`Explicit matchup failed side threshold (away ${top.pairAway}/78, home ${top.pairHome}/78).`;
+    else if(!bestDirect)reason='Explicit matchup sides looked plausible but direct matchup resolution did not produce a unique match.';
+  }
+  return {
+    parsedAway:pair?.away||'',parsedHome:pair?.home||'',
+    normalizedAway:pair?normalizeImportTeamText(pair.away):'',normalizedHome:pair?normalizeImportTeamText(pair.home):'',
+    selection:candidate?.selection||'',normalizedSelection:normalizeImportTeamText(candidate?.selection||''),
+    activeWeek:Number(activeWeek),bestDirect,bestNormal,reason,tested
+  };
+}
+function importOcrConfusablePhraseMatch(text,form){
+  // 2.9.3: OCR commonly reads an uppercase I as lowercase l ("Iowa" -> "lowa").
+  // Treat that as a strong match only when every other character in the phrase agrees.
+  // This is deliberately generic and phrase-scoped; it is not a BYU/Iowa exception.
+  const a=normalizeImportTeamText(text).split(' ').filter(Boolean);
+  const b=normalizeImportTeamText(form).split(' ').filter(Boolean);
+  if(!a.length||!b.length||a.length<b.length)return false;
+  const tokenMatch=(x,y)=>{
+    if(x===y)return true;
+    if(x.length!==y.length||x.length<2)return false;
+    let diffs=0;
+    for(let i=0;i<x.length;i++){
+      if(x[i]===y[i])continue;
+      if(i===0 && ((x[i]==='l'&&y[i]==='i')||(x[i]==='i'&&y[i]==='l'))){diffs++;continue;}
+      return false;
+    }
+    return diffs===1;
+  };
+  for(let start=0;start<=a.length-b.length;start++){
+    let ok=true;
+    for(let i=0;i<b.length;i++)if(!tokenMatch(a[start+i],b[i])){ok=false;break;}
+    if(ok)return true;
+  }
+  return false;
+}
+function importOcrSchoolPrefixMatch(text,form){
+  // 2.9.5: sportsbook event rows often use the school name while TrackPicks stores
+  // the full ESPN name including mascot ("Iowa State" vs "Iowa State Cyclones").
+  // Compare the OCR phrase against the leading canonical tokens and allow the same
+  // first-letter I/l OCR confusion handled by importOcrConfusablePhraseMatch.
+  const a=normalizeImportTeamText(text).split(' ').filter(Boolean);
+  const b=normalizeImportTeamText(form).split(' ').filter(Boolean);
+  if(a.length<2 || b.length<=a.length)return false;
+  const tokenMatch=(x,y)=>{
+    if(x===y)return true;
+    if(x.length!==y.length||x.length<2)return false;
+    let diffs=0;
+    for(let i=0;i<x.length;i++){
+      if(x[i]===y[i])continue;
+      if(i===0 && ((x[i]==='l'&&y[i]==='i')||(x[i]==='i'&&y[i]==='l'))){diffs++;continue;}
+      return false;
+    }
+    return diffs===1;
+  };
+  return a.every((token,i)=>tokenMatch(token,b[i]));
+}
+function importTruncatedTeamSideScore(text,teamName){
+  const raw=normalizeImportTeamText(text).replace(/\s+/g,' ').trim();
+  if(raw.length<4)return 0;
+  let best=0;
+  for(const form of importTeamForms(teamName)){
+    // Sportsbook rows often end in an OCR/UI ellipsis (Kans..., North Caro...).
+    // A four+ character leading fragment is safe only as matchup-side evidence;
+    // it is never used by itself to choose a wager selection.
+    if(form.startsWith(raw) && form.length>raw.length)best=Math.max(best,86);
+  }
+  return best;
+}
+function loadStitchedScreenshotParlay(){
+  const f=state.screenshotImportFlow;if(!f||f.saving||!f.multiLeg)return;
+  const t=f.multiLeg;
+  if(!t.complete){alert(`TrackPicks found ${t.legs.length} of ${t.expectedLegs} unique legs. Add/retake screenshots with overlap until all ${t.expectedLegs} legs are visible.`);return;}
+  if(!Number.isFinite(Number(t.odds))){alert('TrackPicks could not read the ticket payout odds. Keep this batch and retake the screenshot with the parlay header visible.');return;}
+  const legs=t.legs.map(screenshotCandidateToParlayLeg).filter(Boolean);
+  if(legs.length!==t.expectedLegs){alert('One or more stitched legs could not be matched to a TrackPicks game.');return;}
+  resetParlayDraft();
+  state.parlayDraft.legs=legs;
+  state.parlayDraft.who=state.displayName||'';
+  state.parlayDraft.units=Number.isFinite(Number(t.units))&&Number(t.units)>0?Number(t.units):1;
+  state.parlayDraft.odds=String(t.odds>0?`+${t.odds}`:t.odds);
+  state.parlayDraft.isTeaser=!!t.isTeaser;
+  state.parlayDraft.teaserPoints=t.isTeaser?(Number(t.teaserPoints)||6):6;
+  // 2.9.7: confirmation completes the batch. Clear its source screenshots so the
+  // next import always starts from an empty, unambiguous batch.
+  state.screenshotImportFlow=null;
+  state.screenshotImportFiles=[];
+  state.screenshotImportWeek=null;
+  state.screenshotImportMessage='';
+  state.screenshotImportProcessing=false;
+  state.showScreenshotImporter=false; state.view='slip'; state.slipTab='parlays'; render();
+}
+function parseScreenshotMultiLegTicket(){
+  const items=(state.screenshotImportFiles||[]).filter(x=>String(x.ocrText||x.rawOcrText||'').trim());
+  if(!items.length)return null;
+  const normalizedTexts=items.map(x=>normalizeOcrBetText(x.ocrText||x.rawOcrText||''));
+  const joined=normalizedTexts.join('\n');
+  const header=joined.match(/\b(\d{1,2})\s*leg\s+(?:(college\s+football)\s+)?(parlay|teaser)\b/i);
+  if(!header)return null;
+  const expectedLegs=Number(header[1]);
+  if(!Number.isFinite(expectedLegs)||expectedLegs<2)return null;
+  const isTeaser=header[3].toLowerCase()==='teaser';
+
+  // 2.9.6: ticket-level metadata belongs to the stitched bet, not an individual leg.
+  // Parse every screenshot independently so a header on image 1 and footer on image 2 combine cleanly.
+  let odds=null,oddsSource=null,stakeUsd=null,stakeSource=null,totalPayoutUsd=null,payoutSource=null;
+  normalizedTexts.forEach((text,sourceIndex)=>{
+    const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
+    for(const line of lines){
+      if(odds==null){
+        const hm=line.match(/\b\d{1,2}\s*leg\s+(?:(?:college\s+football)\s+)?(?:parlay|teaser)\b[^\n]*?([+-]\d{3,5})\b/i);
+        if(hm){odds=Number(hm[1]);oddsSource=sourceIndex;}
+      }
+    }
+    // FanDuel OCR commonly flattens the two-column footer into:
+    // "$10.00 $104.72 TOTAL WAGER TOTAL PAYOUT". Keep the values paired with their labels.
+    const paired=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\s+(?:TOTAL\s+)?WAGER\s+(?:TOTAL\s+)?PAYOUT/i);
+    const returnedPair=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\s+(?:TOTAL\s+)?WAGER\s+RETURNED/i);
+    if(paired){
+      if(stakeUsd==null){stakeUsd=Number(paired[1].replace(/,/g,''));stakeSource=sourceIndex;}
+      if(totalPayoutUsd==null){totalPayoutUsd=Number(paired[2].replace(/,/g,''));payoutSource=sourceIndex;}
+    }else if(returnedPair){
+      // Settled FanDuel tickets use "$5.00 $0.00 / TOTAL WAGER RETURNED".
+      // The second amount is a settlement return, never the wager.
+      if(stakeUsd==null){stakeUsd=Number(returnedPair[1].replace(/,/g,''));stakeSource=sourceIndex;}
+    }else{
+      const wm=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\n\s*)?TOTAL\s+WAGER/i);
+      const pm=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\n\s*)?TOTAL\s+PAYOUT/i);
+      if(wm&&stakeUsd==null){stakeUsd=Number(wm[1].replace(/,/g,''));stakeSource=sourceIndex;}
+      if(pm&&totalPayoutUsd==null){totalPayoutUsd=Number(pm[1].replace(/,/g,''));payoutSource=sourceIndex;}
+    }
+  });
+  const teaserMatch=isTeaser?joined.match(/\bteaser\s*\+?\s*(\d+(?:\.5)?)/i):null;
+  const teaserPoints=teaserMatch?Number(teaserMatch[1]):6;
+  const units=Number.isFinite(stakeUsd)&&Number(state.standardUnitSize)>0?stakeUsd/Number(state.standardUnitSize):null;
+
+  // 2.9.3+ stitch diagnostics: preserve every OCR candidate long enough to explain why it did or did not enter stitching.
+  const stitchDiagnostics={screenshots:[],connections:[],expectedLegs,metadata:{
+    odds:Number.isFinite(odds)?odds:null,oddsSource,
+    stakeUsd:Number.isFinite(stakeUsd)?stakeUsd:null,stakeSource,
+    totalPayoutUsd:Number.isFinite(totalPayoutUsd)?totalPayoutUsd:null,payoutSource
+  }};
+  const perImage=items.map((item,sourceIndex)=>{
+    const raw=(item.candidates||[]);
+    const rows=raw.map((c,candidateIndex)=>({
+      candidateIndex,
+      label:importCandidateLabel(c),
+      selection:c.matchedSelection||c.selection||'',
+      betType:c.betType||'',
+      line:Number.isFinite(Number(c.line))?Number(c.line):null,
+      eventText:c.eventText||'',
+      matchStatus:c.matchStatus||'unknown',
+      matchedGameId:c.matchedGameId||'',
+      matchedAway:c.matchedAway||'',
+      matchedHome:c.matchedHome||'',
+      matchedSelection:c.matchedSelection||'',
+      rawSelection:c.rawSelection||'',
+      currentSelection:c.selection||'',
+      selectionTrace:c._selectionTrace||null,
+      reconciliationDiagnostic:c.reconciliationDiagnostic||null,
+      decision:c.matchStatus==='matched'?'ELIGIBLE FOR STITCH':`EXCLUDED BEFORE STITCH — matchStatus=${c.matchStatus||'unknown'}`
+    }));
+    stitchDiagnostics.screenshots.push({sourceIndex,rawCount:raw.length,eligibleCount:rows.filter(r=>r.matchStatus==='matched').length,candidates:rows});
+    // 2.9.10: reconciliation may change identity, never sportsbook order. Derive an
+    // immutable visual/OCR position from the original screenshot text and carry it
+    // through stitching. Event rows are preferred over selection text because ticket
+    // summaries can repeat selections near the top of the screenshot.
+    const ocrHaystack=normalizeImportTeamText(item.ocrText||item.rawOcrText||'');
+    const withPosition=raw.map((c,rawIndex)=>{
+      const eventNeedle=normalizeImportTeamText(c.eventText||'');
+      const selectionNeedle=normalizeImportTeamText(c.rawSelection||c.selection||'');
+      let ocrPosition=eventNeedle.length>=6?ocrHaystack.indexOf(eventNeedle):-1;
+      if(ocrPosition<0&&selectionNeedle.length>=3)ocrPosition=ocrHaystack.indexOf(selectionNeedle);
+      if(ocrPosition<0)ocrPosition=1000000+rawIndex;
+      return {...c,sourceScreenshotIndex:sourceIndex,_sourceRawIndex:rawIndex,_sourceOcrPosition:ocrPosition};
+    });
+    return withPosition.filter(c=>c.matchStatus==='matched').sort((a,b)=>a._sourceOcrPosition-b._sourceOcrPosition||a._sourceRawIndex-b._sourceRawIndex).map((c,candidateIndex)=>({...c,_stitchCandidateIndex:candidateIndex}));
+  });
+  const norm=c=>({
+    game:String(c?.matchedGameId||''),
+    away:normalizeTeamName(c?.matchedAway||''),
+    home:normalizeTeamName(c?.matchedHome||''),
+    sel:normalizeTeamName(c?.matchedSelection||c?.selection||''),
+    type:String(c?.betType||'').toLowerCase(),
+    line:Number.isFinite(Number(c?.line))?Number(c.line):null
+  });
+  const sameGame=(a,b)=>{
+    const x=norm(a),y=norm(b);
+    if(x.game&&y.game&&x.game===y.game)return true;
+    return !!(x.away&&x.home&&x.away===y.away&&x.home===y.home);
+  };
+  const overlapScore=(a,b)=>{
+    const x=norm(a),y=norm(b); let score=0;
+    if(sameGame(a,b))score+=6;
+    if(x.sel&&y.sel&&x.sel===y.sel)score+=5;
+    if(x.type&&y.type&&x.type===y.type)score+=3;
+    if(x.line!=null&&y.line!=null&&x.line===y.line)score+=1;
+    return score;
+  };
+  const isSameLeg=(a,b)=>{
+    const x=norm(a),y=norm(b);
+    // Prefer reconciled TrackPicks identity. A missing/misread sportsbook price must not break a stitch.
+    if(sameGame(a,b)&&x.sel&&x.sel===y.sel&&x.type&&x.type===y.type)return true;
+    // 2.9.15: a repeated leg may be clipped on one screenshot so the event survives but the
+    // selection does not (for example sportsbook chrome is OCR'd as the selection). If the
+    // other copy resolves cleanly to the same matched game and market, merge the degraded copy
+    // into the complete one. Never merge when both selections are unresolved.
+    if(sameGame(a,b)&&x.type&&x.type===y.type){
+      const aFits=screenshotSelectionFitsMatchedGame(a),bFits=screenshotSelectionFitsMatchedGame(b);
+      if(aFits!==bFits)return true;
+    }
+    // Cut-off OCR can lose the matchup on one copy; selection + market + line is still strong evidence.
+    if(x.sel&&x.sel===y.sel&&x.type&&x.type===y.type&&x.line!=null&&y.line!=null&&x.line===y.line)return true;
+    return overlapScore(a,b)>=11;
+  };
+  const mergeLeg=(a,b)=>mergeScreenshotCandidateEvidence(a,b);
+  const findBoundaryOverlap=(left,right)=>{
+    // Search only the tail/head boundary first. Prefer the longest ordered overlap.
+    const max=Math.min(4,left.length,right.length);
+    for(let n=max;n>=1;n--){
+      let ok=true;
+      for(let j=0;j<n;j++)if(!isSameLeg(left[left.length-n+j],right[j])){ok=false;break;}
+      if(ok)return {leftStart:left.length-n,rightStart:0,count:n,score:n*20};
+    }
+    // OCR may create an extra partial candidate at either edge. Find the strongest anchor nearby.
+    let best=null;
+    const l0=Math.max(0,left.length-4),rMax=Math.min(4,right.length);
+    for(let li=l0;li<left.length;li++)for(let ri=0;ri<rMax;ri++){
+      if(!isSameLeg(left[li],right[ri]))continue;
+      const score=overlapScore(left[li],right[ri])+(li-l0)+(rMax-ri);
+      if(!best||score>best.score)best={leftStart:li,rightStart:ri,count:1,score};
+    }
+    return best;
+  };
+
+  // 2.9.8: determine screenshot order from RAW parsed wager identity before Week/game
+  // reconciliation. Ordering and game matching are separate jobs: a truncated matchup can
+  // still be excellent evidence that two screenshots touch.
+  const rawNorm=c=>({
+    sel:normalizeImportTeamText(c?.selection||c?.matchedSelection||''),
+    type:String(c?.betType||'').toLowerCase(),
+    line:Number.isFinite(Number(c?.line))?Number(c.line):null,
+    odds:Number.isFinite(Number(c?.odds))?Number(c.odds):null
+  });
+  const rawOverlapScore=(a,b)=>{
+    const x=rawNorm(a),y=rawNorm(b);let score=0;
+    if(x.sel&&y.sel&&x.sel===y.sel)score+=10;
+    if(x.type&&y.type&&x.type===y.type)score+=4;
+    if(x.line!=null&&y.line!=null&&x.line===y.line)score+=2;
+    if(x.odds!=null&&y.odds!=null&&x.odds===y.odds)score+=2;
+    return score;
+  };
+  const rawSameLeg=(a,b)=>{
+    const x=rawNorm(a),y=rawNorm(b);
+    if(!x.sel||x.sel!==y.sel)return false;
+    if(x.type&&y.type&&x.type!==y.type)return false;
+    // Selection + market is enough at a screenshot boundary. Price is supporting evidence;
+    // OCR can drop it on one copy of the repeated leg.
+    return rawOverlapScore(a,b)>=10;
+  };
+  const rawPerImage=items.map((item,sourceIndex)=>(item.candidates||[]).map(c=>({...c,sourceScreenshotIndex:sourceIndex})));
+  const findRawBoundaryOverlap=(left,right)=>{
+    const max=Math.min(5,left.length,right.length);
+    for(let n=max;n>=1;n--){
+      let ok=true,score=0;
+      for(let j=0;j<n;j++){
+        const a=left[left.length-n+j],b=right[j];
+        if(!rawSameLeg(a,b)){ok=false;break;}
+        score+=20+rawOverlapScore(a,b);
+      }
+      if(ok)return {leftStart:left.length-n,rightStart:0,count:n,score};
+    }
+    let best=null;
+    const l0=Math.max(0,left.length-5),rMax=Math.min(5,right.length);
+    for(let li=l0;li<left.length;li++)for(let ri=0;ri<rMax;ri++){
+      if(!rawSameLeg(left[li],right[ri]))continue;
+      const score=rawOverlapScore(left[li],right[ri])+(li-l0)+(rMax-ri);
+      if(!best||score>best.score)best={leftStart:li,rightStart:ri,count:1,score};
+    }
+    return best;
+  };
+  const uploadedOrder=rawPerImage.map((_,i)=>i);
+  const uploadedHits=uploadedOrder.slice(1).map((to,i)=>findRawBoundaryOverlap(rawPerImage[uploadedOrder[i]],rawPerImage[to]));
+  const uploadedOrderValid=uploadedHits.every(Boolean);
+  const findScreenshotOrder=()=>{
+    if(rawPerImage.length<=1)return {order:[0],score:0,mode:'single'};
+    const attempts=[];
+    for(let start=0;start<rawPerImage.length;start++){
+      const order=[start],unused=new Set(rawPerImage.map((_,i)=>i).filter(i=>i!==start));
+      let score=0,valid=true;
+      while(unused.size){
+        const from=order[order.length-1];
+        const options=[...unused].map(to=>({to,hit:findRawBoundaryOverlap(rawPerImage[from],rawPerImage[to])})).filter(x=>x.hit).sort((a,b)=>b.hit.score-a.hit.score);
+        if(!options.length){valid=false;break;}
+        if(options.length>1&&options[0].hit.score===options[1].hit.score){valid=false;break;}
+        const best=options[0];order.push(best.to);unused.delete(best.to);score+=best.hit.score;
+      }
+      if(valid)attempts.push({order,score,mode:'raw-auto'});
+    }
+    attempts.sort((a,b)=>b.score-a.score);
+    if(attempts.length&&!(attempts.length>1&&attempts[0].score===attempts[1].score&&attempts[0].order.join(',')!==attempts[1].order.join(',')))return attempts[0];
+    // Never make a correctly uploaded batch worse just because automatic ordering is ambiguous.
+    if(uploadedOrderValid)return {order:uploadedOrder,score:uploadedHits.reduce((n,h)=>n+(h?.score||0),0),mode:'upload-fallback'};
+    return null;
+  };
+  const ordered=findScreenshotOrder();
+  if(!ordered){
+    return {error:'Could not confidently determine screenshot order from the repeated wager legs. Keep the screenshots in ticket order or include at least one repeated leg between each pair.',expectedLegs,isTeaser};
+  }
+  const screenshotOrder=ordered.order;
+  stitchDiagnostics.order={
+    uploaded:uploadedOrder,
+    resolved:screenshotOrder,
+    autoReordered:screenshotOrder.some((x,i)=>x!==i),
+    score:ordered.score,
+    mode:ordered.mode
+  };
+
+  // The raw overlaps establish the chain. Once ordered, merge only reconciled TrackPicks
+  // candidates into the final wager; do not require the repeated boundary leg itself to
+  // survive reconciliation on both screenshots.
+  let stitched=perImage[screenshotOrder[0]]?[...perImage[screenshotOrder[0]]]:[];
+  let overlapCount=0;
+  for(let oi=1;oi<screenshotOrder.length;oi++){
+    const prevSource=screenshotOrder[oi-1],nextSource=screenshotOrder[oi];
+    const rawHit=findRawBoundaryOverlap(rawPerImage[prevSource],rawPerImage[nextSource]);
+    if(!rawHit){
+      return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
+    }
+    overlapCount++;
+    const leftRaw=rawPerImage[prevSource][rawHit.leftStart+rawHit.count-1];
+    const rightRaw=rawPerImage[nextSource][rawHit.rightStart+rawHit.count-1];
+    stitchDiagnostics.connections.push({
+      fromScreenshot:prevSource+1,toScreenshot:nextSource+1,count:rawHit.count,score:rawHit.score,
+      leftLabel:importCandidateLabel(leftRaw),rightLabel:importCandidateLabel(rightRaw),decision:'RAW OVERLAP → MERGE CHAIN'
+    });
+    for(const c of perImage[nextSource]){
+      const duplicateIndex=stitched.findIndex(x=>isSameLeg(x,c));
+      if(duplicateIndex>=0)stitched[duplicateIndex]=mergeLeg(stitched[duplicateIndex],c);
+      else stitched.push(c);
+    }
+  }
+  // Final de-dupe uses reconciled game/selection/market identity instead of raw OCR fingerprints.
+  const legs=[];
+  for(const c of stitched){
+    const idx=legs.findIndex(x=>isSameLeg(x,c));
+    if(idx>=0)legs[idx]=mergeLeg(legs[idx],c); else legs.push(c);
+  }
+  if(!legs.length)return null;
+  stitchDiagnostics.finalLegs=legs.map((c,i)=>({index:i+1,label:importCandidateLabel(c),gameId:c.matchedGameId||'',matchStatus:c.matchStatus||''}));
+  stitchDiagnostics.finalCount=legs.length;
+  stitchDiagnostics.summary=`${items.reduce((n,item)=>n+(item.candidates||[]).length,0)} raw candidates → ${perImage.reduce((n,row)=>n+row.length,0)} stitch-eligible → ${legs.length} unique legs`;
+  return {expectedLegs,isTeaser,teaserPoints,odds:Number.isFinite(odds)?odds:null,stakeUsd,totalPayoutUsd:Number.isFinite(totalPayoutUsd)?totalPayoutUsd:null,units,legs,overlapCount,screenshotCount:perImage.length,stitchDiagnostics,
+    complete:legs.length===expectedLegs};
+}
+function screenshotCandidateToParlayLeg(c){
+  const g=gameById(c.matchedGameId); if(!g)return null;
+  const selection=c.matchedSelection||c.selection;
+  const sourceLine=c.betType==='Moneyline'?null:Number(c.line);
+  return {id:crypto.randomUUID(),gameId:g.id,betType:c.betType,selection,sourceLine:Number.isFinite(sourceLine)?sourceLine:null,odds:Number.isFinite(Number(c.odds))?Number(c.odds):-110,result:'Pending'};
+}
+function screenshotSelectionFitsMatchedGame(c){
+  if(!c||c.matchStatus!=='matched')return false;
+  const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
+  if(!sel)return false;
+  const type=String(c.betType||'').toLowerCase();
+  if(type==='total')return /^(over|under)(?:\b|\s)/i.test(String(c.matchedSelection||c.selection||'').trim());
+  const away=normalizeTeamName(c.matchedAway||'');
+  const home=normalizeTeamName(c.matchedHome||'');
+  return !!((away&&sel===away)||(home&&sel===home));
 }
 
 function effectivePickerNames(){
@@ -3371,16 +3667,6 @@ function renderGameSheet(){
 
 
 // 2.5.5: reconcile all screenshot evidence before anything is offered to the Slip.
-function screenshotSelectionFitsMatchedGame(c){
-  if(!c||c.matchStatus!=='matched')return false;
-  const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
-  if(!sel)return false;
-  const type=String(c.betType||'').toLowerCase();
-  if(type==='total')return /^(over|under)(?:\b|\s)/i.test(String(c.matchedSelection||c.selection||'').trim());
-  const away=normalizeTeamName(c.matchedAway||'');
-  const home=normalizeTeamName(c.matchedHome||'');
-  return !!((away&&sel===away)||(home&&sel===home));
-}
 function screenshotCandidateQuality(c){
   if(!c)return 0;
   // 2.9.15: prefer a candidate whose selection actually resolves inside its matched game.
@@ -3420,298 +3706,6 @@ function reconcileScreenshotImportBatch(){
     else groups[idx].candidate=mergeScreenshotCandidateEvidence(groups[idx].candidate,c);
   }
   return groups.map(g=>finalizeScreenshotCandidateReadiness(g.candidate));
-}
-function parseScreenshotMultiLegTicket(){
-  const items=(state.screenshotImportFiles||[]).filter(x=>String(x.ocrText||x.rawOcrText||'').trim());
-  if(!items.length)return null;
-  const normalizedTexts=items.map(x=>normalizeOcrBetText(x.ocrText||x.rawOcrText||''));
-  const joined=normalizedTexts.join('\n');
-  const header=joined.match(/\b(\d{1,2})\s*leg\s+(?:(college\s+football)\s+)?(parlay|teaser)\b/i);
-  if(!header)return null;
-  const expectedLegs=Number(header[1]);
-  if(!Number.isFinite(expectedLegs)||expectedLegs<2)return null;
-  const isTeaser=header[3].toLowerCase()==='teaser';
-
-  // 2.9.6: ticket-level metadata belongs to the stitched bet, not an individual leg.
-  // Parse every screenshot independently so a header on image 1 and footer on image 2 combine cleanly.
-  let odds=null,oddsSource=null,stakeUsd=null,stakeSource=null,totalPayoutUsd=null,payoutSource=null;
-  normalizedTexts.forEach((text,sourceIndex)=>{
-    const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
-    for(const line of lines){
-      if(odds==null){
-        const hm=line.match(/\b\d{1,2}\s*leg\s+(?:(?:college\s+football)\s+)?(?:parlay|teaser)\b[^\n]*?([+-]\d{3,5})\b/i);
-        if(hm){odds=Number(hm[1]);oddsSource=sourceIndex;}
-      }
-    }
-    // FanDuel OCR commonly flattens the two-column footer into:
-    // "$10.00 $104.72 TOTAL WAGER TOTAL PAYOUT". Keep the values paired with their labels.
-    const paired=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\s+(?:TOTAL\s+)?WAGER\s+(?:TOTAL\s+)?PAYOUT/i);
-    const returnedPair=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\s+(?:TOTAL\s+)?WAGER\s+RETURNED/i);
-    if(paired){
-      if(stakeUsd==null){stakeUsd=Number(paired[1].replace(/,/g,''));stakeSource=sourceIndex;}
-      if(totalPayoutUsd==null){totalPayoutUsd=Number(paired[2].replace(/,/g,''));payoutSource=sourceIndex;}
-    }else if(returnedPair){
-      // Settled FanDuel tickets use "$5.00 $0.00 / TOTAL WAGER RETURNED".
-      // The second amount is a settlement return, never the wager.
-      if(stakeUsd==null){stakeUsd=Number(returnedPair[1].replace(/,/g,''));stakeSource=sourceIndex;}
-    }else{
-      const wm=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\n\s*)?TOTAL\s+WAGER/i);
-      const pm=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\n\s*)?TOTAL\s+PAYOUT/i);
-      if(wm&&stakeUsd==null){stakeUsd=Number(wm[1].replace(/,/g,''));stakeSource=sourceIndex;}
-      if(pm&&totalPayoutUsd==null){totalPayoutUsd=Number(pm[1].replace(/,/g,''));payoutSource=sourceIndex;}
-    }
-  });
-  const teaserMatch=isTeaser?joined.match(/\bteaser\s*\+?\s*(\d+(?:\.5)?)/i):null;
-  const teaserPoints=teaserMatch?Number(teaserMatch[1]):6;
-  const units=Number.isFinite(stakeUsd)&&Number(state.standardUnitSize)>0?stakeUsd/Number(state.standardUnitSize):null;
-
-  // 2.9.3+ stitch diagnostics: preserve every OCR candidate long enough to explain why it did or did not enter stitching.
-  const stitchDiagnostics={screenshots:[],connections:[],expectedLegs,metadata:{
-    odds:Number.isFinite(odds)?odds:null,oddsSource,
-    stakeUsd:Number.isFinite(stakeUsd)?stakeUsd:null,stakeSource,
-    totalPayoutUsd:Number.isFinite(totalPayoutUsd)?totalPayoutUsd:null,payoutSource
-  }};
-  const perImage=items.map((item,sourceIndex)=>{
-    const raw=(item.candidates||[]);
-    const rows=raw.map((c,candidateIndex)=>({
-      candidateIndex,
-      label:importCandidateLabel(c),
-      selection:c.matchedSelection||c.selection||'',
-      betType:c.betType||'',
-      line:Number.isFinite(Number(c.line))?Number(c.line):null,
-      eventText:c.eventText||'',
-      matchStatus:c.matchStatus||'unknown',
-      matchedGameId:c.matchedGameId||'',
-      matchedAway:c.matchedAway||'',
-      matchedHome:c.matchedHome||'',
-      matchedSelection:c.matchedSelection||'',
-      rawSelection:c.rawSelection||'',
-      currentSelection:c.selection||'',
-      selectionTrace:c._selectionTrace||null,
-      reconciliationDiagnostic:c.reconciliationDiagnostic||null,
-      decision:c.matchStatus==='matched'?'ELIGIBLE FOR STITCH':`EXCLUDED BEFORE STITCH — matchStatus=${c.matchStatus||'unknown'}`
-    }));
-    stitchDiagnostics.screenshots.push({sourceIndex,rawCount:raw.length,eligibleCount:rows.filter(r=>r.matchStatus==='matched').length,candidates:rows});
-    // 2.9.10: reconciliation may change identity, never sportsbook order. Derive an
-    // immutable visual/OCR position from the original screenshot text and carry it
-    // through stitching. Event rows are preferred over selection text because ticket
-    // summaries can repeat selections near the top of the screenshot.
-    const ocrHaystack=normalizeImportTeamText(item.ocrText||item.rawOcrText||'');
-    const withPosition=raw.map((c,rawIndex)=>{
-      const eventNeedle=normalizeImportTeamText(c.eventText||'');
-      const selectionNeedle=normalizeImportTeamText(c.rawSelection||c.selection||'');
-      let ocrPosition=eventNeedle.length>=6?ocrHaystack.indexOf(eventNeedle):-1;
-      if(ocrPosition<0&&selectionNeedle.length>=3)ocrPosition=ocrHaystack.indexOf(selectionNeedle);
-      if(ocrPosition<0)ocrPosition=1000000+rawIndex;
-      return {...c,sourceScreenshotIndex:sourceIndex,_sourceRawIndex:rawIndex,_sourceOcrPosition:ocrPosition};
-    });
-    return withPosition.filter(c=>c.matchStatus==='matched').sort((a,b)=>a._sourceOcrPosition-b._sourceOcrPosition||a._sourceRawIndex-b._sourceRawIndex).map((c,candidateIndex)=>({...c,_stitchCandidateIndex:candidateIndex}));
-  });
-  const norm=c=>({
-    game:String(c?.matchedGameId||''),
-    away:normalizeTeamName(c?.matchedAway||''),
-    home:normalizeTeamName(c?.matchedHome||''),
-    sel:normalizeTeamName(c?.matchedSelection||c?.selection||''),
-    type:String(c?.betType||'').toLowerCase(),
-    line:Number.isFinite(Number(c?.line))?Number(c.line):null
-  });
-  const sameGame=(a,b)=>{
-    const x=norm(a),y=norm(b);
-    if(x.game&&y.game&&x.game===y.game)return true;
-    return !!(x.away&&x.home&&x.away===y.away&&x.home===y.home);
-  };
-  const overlapScore=(a,b)=>{
-    const x=norm(a),y=norm(b); let score=0;
-    if(sameGame(a,b))score+=6;
-    if(x.sel&&y.sel&&x.sel===y.sel)score+=5;
-    if(x.type&&y.type&&x.type===y.type)score+=3;
-    if(x.line!=null&&y.line!=null&&x.line===y.line)score+=1;
-    return score;
-  };
-  const isSameLeg=(a,b)=>{
-    const x=norm(a),y=norm(b);
-    // Prefer reconciled TrackPicks identity. A missing/misread sportsbook price must not break a stitch.
-    if(sameGame(a,b)&&x.sel&&x.sel===y.sel&&x.type&&x.type===y.type)return true;
-    // 2.9.15: a repeated leg may be clipped on one screenshot so the event survives but the
-    // selection does not (for example sportsbook chrome is OCR'd as the selection). If the
-    // other copy resolves cleanly to the same matched game and market, merge the degraded copy
-    // into the complete one. Never merge when both selections are unresolved.
-    if(sameGame(a,b)&&x.type&&x.type===y.type){
-      const aFits=screenshotSelectionFitsMatchedGame(a),bFits=screenshotSelectionFitsMatchedGame(b);
-      if(aFits!==bFits)return true;
-    }
-    // Cut-off OCR can lose the matchup on one copy; selection + market + line is still strong evidence.
-    if(x.sel&&x.sel===y.sel&&x.type&&x.type===y.type&&x.line!=null&&y.line!=null&&x.line===y.line)return true;
-    return overlapScore(a,b)>=11;
-  };
-  const mergeLeg=(a,b)=>mergeScreenshotCandidateEvidence(a,b);
-  const findBoundaryOverlap=(left,right)=>{
-    // Search only the tail/head boundary first. Prefer the longest ordered overlap.
-    const max=Math.min(4,left.length,right.length);
-    for(let n=max;n>=1;n--){
-      let ok=true;
-      for(let j=0;j<n;j++)if(!isSameLeg(left[left.length-n+j],right[j])){ok=false;break;}
-      if(ok)return {leftStart:left.length-n,rightStart:0,count:n,score:n*20};
-    }
-    // OCR may create an extra partial candidate at either edge. Find the strongest anchor nearby.
-    let best=null;
-    const l0=Math.max(0,left.length-4),rMax=Math.min(4,right.length);
-    for(let li=l0;li<left.length;li++)for(let ri=0;ri<rMax;ri++){
-      if(!isSameLeg(left[li],right[ri]))continue;
-      const score=overlapScore(left[li],right[ri])+(li-l0)+(rMax-ri);
-      if(!best||score>best.score)best={leftStart:li,rightStart:ri,count:1,score};
-    }
-    return best;
-  };
-
-  // 2.9.8: determine screenshot order from RAW parsed wager identity before Week/game
-  // reconciliation. Ordering and game matching are separate jobs: a truncated matchup can
-  // still be excellent evidence that two screenshots touch.
-  const rawNorm=c=>({
-    sel:normalizeImportTeamText(c?.selection||c?.matchedSelection||''),
-    type:String(c?.betType||'').toLowerCase(),
-    line:Number.isFinite(Number(c?.line))?Number(c.line):null,
-    odds:Number.isFinite(Number(c?.odds))?Number(c.odds):null
-  });
-  const rawOverlapScore=(a,b)=>{
-    const x=rawNorm(a),y=rawNorm(b);let score=0;
-    if(x.sel&&y.sel&&x.sel===y.sel)score+=10;
-    if(x.type&&y.type&&x.type===y.type)score+=4;
-    if(x.line!=null&&y.line!=null&&x.line===y.line)score+=2;
-    if(x.odds!=null&&y.odds!=null&&x.odds===y.odds)score+=2;
-    return score;
-  };
-  const rawSameLeg=(a,b)=>{
-    const x=rawNorm(a),y=rawNorm(b);
-    if(!x.sel||x.sel!==y.sel)return false;
-    if(x.type&&y.type&&x.type!==y.type)return false;
-    // Selection + market is enough at a screenshot boundary. Price is supporting evidence;
-    // OCR can drop it on one copy of the repeated leg.
-    return rawOverlapScore(a,b)>=10;
-  };
-  const rawPerImage=items.map((item,sourceIndex)=>(item.candidates||[]).map(c=>({...c,sourceScreenshotIndex:sourceIndex})));
-  const findRawBoundaryOverlap=(left,right)=>{
-    const max=Math.min(5,left.length,right.length);
-    for(let n=max;n>=1;n--){
-      let ok=true,score=0;
-      for(let j=0;j<n;j++){
-        const a=left[left.length-n+j],b=right[j];
-        if(!rawSameLeg(a,b)){ok=false;break;}
-        score+=20+rawOverlapScore(a,b);
-      }
-      if(ok)return {leftStart:left.length-n,rightStart:0,count:n,score};
-    }
-    let best=null;
-    const l0=Math.max(0,left.length-5),rMax=Math.min(5,right.length);
-    for(let li=l0;li<left.length;li++)for(let ri=0;ri<rMax;ri++){
-      if(!rawSameLeg(left[li],right[ri]))continue;
-      const score=rawOverlapScore(left[li],right[ri])+(li-l0)+(rMax-ri);
-      if(!best||score>best.score)best={leftStart:li,rightStart:ri,count:1,score};
-    }
-    return best;
-  };
-  const uploadedOrder=rawPerImage.map((_,i)=>i);
-  const uploadedHits=uploadedOrder.slice(1).map((to,i)=>findRawBoundaryOverlap(rawPerImage[uploadedOrder[i]],rawPerImage[to]));
-  const uploadedOrderValid=uploadedHits.every(Boolean);
-  const findScreenshotOrder=()=>{
-    if(rawPerImage.length<=1)return {order:[0],score:0,mode:'single'};
-    const attempts=[];
-    for(let start=0;start<rawPerImage.length;start++){
-      const order=[start],unused=new Set(rawPerImage.map((_,i)=>i).filter(i=>i!==start));
-      let score=0,valid=true;
-      while(unused.size){
-        const from=order[order.length-1];
-        const options=[...unused].map(to=>({to,hit:findRawBoundaryOverlap(rawPerImage[from],rawPerImage[to])})).filter(x=>x.hit).sort((a,b)=>b.hit.score-a.hit.score);
-        if(!options.length){valid=false;break;}
-        if(options.length>1&&options[0].hit.score===options[1].hit.score){valid=false;break;}
-        const best=options[0];order.push(best.to);unused.delete(best.to);score+=best.hit.score;
-      }
-      if(valid)attempts.push({order,score,mode:'raw-auto'});
-    }
-    attempts.sort((a,b)=>b.score-a.score);
-    if(attempts.length&&!(attempts.length>1&&attempts[0].score===attempts[1].score&&attempts[0].order.join(',')!==attempts[1].order.join(',')))return attempts[0];
-    // Never make a correctly uploaded batch worse just because automatic ordering is ambiguous.
-    if(uploadedOrderValid)return {order:uploadedOrder,score:uploadedHits.reduce((n,h)=>n+(h?.score||0),0),mode:'upload-fallback'};
-    return null;
-  };
-  const ordered=findScreenshotOrder();
-  if(!ordered){
-    return {error:'Could not confidently determine screenshot order from the repeated wager legs. Keep the screenshots in ticket order or include at least one repeated leg between each pair.',expectedLegs,isTeaser};
-  }
-  const screenshotOrder=ordered.order;
-  stitchDiagnostics.order={
-    uploaded:uploadedOrder,
-    resolved:screenshotOrder,
-    autoReordered:screenshotOrder.some((x,i)=>x!==i),
-    score:ordered.score,
-    mode:ordered.mode
-  };
-
-  // The raw overlaps establish the chain. Once ordered, merge only reconciled TrackPicks
-  // candidates into the final wager; do not require the repeated boundary leg itself to
-  // survive reconciliation on both screenshots.
-  let stitched=perImage[screenshotOrder[0]]?[...perImage[screenshotOrder[0]]]:[];
-  let overlapCount=0;
-  for(let oi=1;oi<screenshotOrder.length;oi++){
-    const prevSource=screenshotOrder[oi-1],nextSource=screenshotOrder[oi];
-    const rawHit=findRawBoundaryOverlap(rawPerImage[prevSource],rawPerImage[nextSource]);
-    if(!rawHit){
-      return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
-    }
-    overlapCount++;
-    const leftRaw=rawPerImage[prevSource][rawHit.leftStart+rawHit.count-1];
-    const rightRaw=rawPerImage[nextSource][rawHit.rightStart+rawHit.count-1];
-    stitchDiagnostics.connections.push({
-      fromScreenshot:prevSource+1,toScreenshot:nextSource+1,count:rawHit.count,score:rawHit.score,
-      leftLabel:importCandidateLabel(leftRaw),rightLabel:importCandidateLabel(rightRaw),decision:'RAW OVERLAP → MERGE CHAIN'
-    });
-    for(const c of perImage[nextSource]){
-      const duplicateIndex=stitched.findIndex(x=>isSameLeg(x,c));
-      if(duplicateIndex>=0)stitched[duplicateIndex]=mergeLeg(stitched[duplicateIndex],c);
-      else stitched.push(c);
-    }
-  }
-  // Final de-dupe uses reconciled game/selection/market identity instead of raw OCR fingerprints.
-  const legs=[];
-  for(const c of stitched){
-    const idx=legs.findIndex(x=>isSameLeg(x,c));
-    if(idx>=0)legs[idx]=mergeLeg(legs[idx],c); else legs.push(c);
-  }
-  if(!legs.length)return null;
-  stitchDiagnostics.finalLegs=legs.map((c,i)=>({index:i+1,label:importCandidateLabel(c),gameId:c.matchedGameId||'',matchStatus:c.matchStatus||''}));
-  stitchDiagnostics.finalCount=legs.length;
-  stitchDiagnostics.summary=`${items.reduce((n,item)=>n+(item.candidates||[]).length,0)} raw candidates → ${perImage.reduce((n,row)=>n+row.length,0)} stitch-eligible → ${legs.length} unique legs`;
-  return {expectedLegs,isTeaser,teaserPoints,odds:Number.isFinite(odds)?odds:null,stakeUsd,totalPayoutUsd:Number.isFinite(totalPayoutUsd)?totalPayoutUsd:null,units,legs,overlapCount,screenshotCount:perImage.length,stitchDiagnostics,
-    complete:legs.length===expectedLegs};
-}
-function screenshotCandidateToParlayLeg(c){
-  const g=gameById(c.matchedGameId); if(!g)return null;
-  const selection=c.matchedSelection||c.selection;
-  const sourceLine=c.betType==='Moneyline'?null:Number(c.line);
-  return {id:crypto.randomUUID(),gameId:g.id,betType:c.betType,selection,sourceLine:Number.isFinite(sourceLine)?sourceLine:null,odds:Number.isFinite(Number(c.odds))?Number(c.odds):-110,result:'Pending'};
-}
-function loadStitchedScreenshotParlay(){
-  const f=state.screenshotImportFlow;if(!f||f.saving||!f.multiLeg)return;
-  const t=f.multiLeg;
-  if(!t.complete){alert(`TrackPicks found ${t.legs.length} of ${t.expectedLegs} unique legs. Add/retake screenshots with overlap until all ${t.expectedLegs} legs are visible.`);return;}
-  if(!Number.isFinite(Number(t.odds))){alert('TrackPicks could not read the ticket payout odds. Keep this batch and retake the screenshot with the parlay header visible.');return;}
-  const legs=t.legs.map(screenshotCandidateToParlayLeg).filter(Boolean);
-  if(legs.length!==t.expectedLegs){alert('One or more stitched legs could not be matched to a TrackPicks game.');return;}
-  resetParlayDraft();
-  state.parlayDraft.legs=legs;
-  state.parlayDraft.who=state.displayName||'';
-  state.parlayDraft.units=Number.isFinite(Number(t.units))&&Number(t.units)>0?Number(t.units):1;
-  state.parlayDraft.odds=String(t.odds>0?`+${t.odds}`:t.odds);
-  state.parlayDraft.isTeaser=!!t.isTeaser;
-  state.parlayDraft.teaserPoints=t.isTeaser?(Number(t.teaserPoints)||6):6;
-  // 2.9.7: confirmation completes the batch. Clear its source screenshots so the
-  // next import always starts from an empty, unambiguous batch.
-  state.screenshotImportFlow=null;
-  state.screenshotImportFiles=[];
-  state.screenshotImportWeek=null;
-  state.screenshotImportMessage='';
-  state.screenshotImportProcessing=false;
-  state.showScreenshotImporter=false; state.view='slip'; state.slipTab='parlays'; render();
 }
 function existingSlipDuplicate(c){
   if(c.matchStatus!=='matched'||!c.matchedGameId)return null;
@@ -3932,6 +3926,14 @@ ${escapeAttr((d.trace.topGames||[]).join('\n')||'none')}</pre></div>`).join('')}
   </section></div>`;
 }
 
+function publicApiUsageSummary(){
+  const rows=state.publicApiUsage||[];
+  const creditOf=r=>Number(r.credits_used??r.api_credits??r.credits??r.credit_count??0)||0;
+  const used=rows.reduce((sum,r)=>sum+creditOf(r),0);
+  const dated=[...rows].sort((a,b)=>new Date(b.pulled_at||b.created_at||b.recorded_at||0)-new Date(a.pulled_at||a.created_at||a.recorded_at||0));
+  const last=dated[0]||null;
+  return {used,remaining:Math.max(0,1000-used),lastCredits:last?creditOf(last):0,lastAt:last?(last.pulled_at||last.created_at||last.recorded_at||null):null};
+}
 function renderSettingsSheet(){
   const adminApiSection = state.isAdmin ? `
     <div class="security-note">
