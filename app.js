@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.14';
+const BUILD_VERSION = '2.9.15';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3255,9 +3255,21 @@ function renderGameSheet(){
 
 
 // 2.5.5: reconcile all screenshot evidence before anything is offered to the Slip.
+function screenshotSelectionFitsMatchedGame(c){
+  if(!c||c.matchStatus!=='matched')return false;
+  const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
+  if(!sel)return false;
+  const type=String(c.betType||'').toLowerCase();
+  if(type==='total')return /^(over|under)(?:\b|\s)/i.test(String(c.matchedSelection||c.selection||'').trim());
+  const away=normalizeTeamName(c.matchedAway||'');
+  const home=normalizeTeamName(c.matchedHome||'');
+  return !!((away&&sel===away)||(home&&sel===home));
+}
 function screenshotCandidateQuality(c){
   if(!c)return 0;
-  return (c.matchStatus==='matched'?30:c.matchStatus==='wrong-week'?20:0)+(c.selection?8:0)+(Number.isFinite(Number(c.line))?5:0)+(Number.isFinite(Number(c.odds))&&!c.oddsNeedsReview?5:0)+(Number.isFinite(Number(c.units))&&Number(c.units)>0?5:0)+(c.eventText?4:0)+(c.sourceBetId?12:0);
+  // 2.9.15: prefer a candidate whose selection actually resolves inside its matched game.
+  // This lets a complete repeated leg beat a clipped/UI-contaminated copy of that same leg.
+  return (c.matchStatus==='matched'?30:c.matchStatus==='wrong-week'?20:0)+(c.selection?8:0)+(screenshotSelectionFitsMatchedGame(c)?10:0)+(Number.isFinite(Number(c.line))?5:0)+(Number.isFinite(Number(c.odds))&&!c.oddsNeedsReview?5:0)+(Number.isFinite(Number(c.units))&&Number(c.units)>0?5:0)+(c.eventText?4:0)+(c.sourceBetId?12:0);
 }
 function screenshotCandidateMergeKey(c){
   if(c?.sourceBetId)return `id:${String(c.sourceBetId).toLowerCase()}`;
@@ -3404,6 +3416,14 @@ function parseScreenshotMultiLegTicket(){
     const x=norm(a),y=norm(b);
     // Prefer reconciled TrackPicks identity. A missing/misread sportsbook price must not break a stitch.
     if(sameGame(a,b)&&x.sel&&x.sel===y.sel&&x.type&&x.type===y.type)return true;
+    // 2.9.15: a repeated leg may be clipped on one screenshot so the event survives but the
+    // selection does not (for example sportsbook chrome is OCR'd as the selection). If the
+    // other copy resolves cleanly to the same matched game and market, merge the degraded copy
+    // into the complete one. Never merge when both selections are unresolved.
+    if(sameGame(a,b)&&x.type&&x.type===y.type){
+      const aFits=screenshotSelectionFitsMatchedGame(a),bFits=screenshotSelectionFitsMatchedGame(b);
+      if(aFits!==bFits)return true;
+    }
     // Cut-off OCR can lose the matchup on one copy; selection + market + line is still strong evidence.
     if(x.sel&&x.sel===y.sel&&x.type&&x.type===y.type&&x.line!=null&&y.line!=null&&x.line===y.line)return true;
     return overlapScore(a,b)>=11;
