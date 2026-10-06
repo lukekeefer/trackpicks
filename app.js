@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.1';
+const BUILD_VERSION = '2.9.2';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3171,7 +3171,27 @@ function parseScreenshotMultiLegTicket(){
   const stakeUsd=wagerMatches.length?Number(wagerMatches[wagerMatches.length-1][1].replace(/,/g,'')):null;
   const units=Number.isFinite(stakeUsd)&&Number(state.standardUnitSize)>0?stakeUsd/Number(state.standardUnitSize):null;
 
-  const perImage=items.map((item,sourceIndex)=>(item.candidates||[]).filter(c=>c.matchStatus==='matched').map(c=>({...c,sourceScreenshotIndex:sourceIndex})));
+  // 2.9.2 stitch diagnostics: preserve every OCR candidate long enough to explain why it did or did not enter stitching.
+  const stitchDiagnostics={screenshots:[],connections:[],expectedLegs};
+  const perImage=items.map((item,sourceIndex)=>{
+    const raw=(item.candidates||[]);
+    const rows=raw.map((c,candidateIndex)=>({
+      candidateIndex,
+      label:importCandidateLabel(c),
+      selection:c.matchedSelection||c.selection||'',
+      betType:c.betType||'',
+      line:Number.isFinite(Number(c.line))?Number(c.line):null,
+      eventText:c.eventText||'',
+      matchStatus:c.matchStatus||'unknown',
+      matchedGameId:c.matchedGameId||'',
+      matchedAway:c.matchedAway||'',
+      matchedHome:c.matchedHome||'',
+      matchedSelection:c.matchedSelection||'',
+      decision:c.matchStatus==='matched'?'ELIGIBLE FOR STITCH':`EXCLUDED BEFORE STITCH — matchStatus=${c.matchStatus||'unknown'}`
+    }));
+    stitchDiagnostics.screenshots.push({sourceIndex,rawCount:raw.length,eligibleCount:rows.filter(r=>r.matchStatus==='matched').length,candidates:rows});
+    return raw.filter(c=>c.matchStatus==='matched').map((c,candidateIndex)=>({...c,sourceScreenshotIndex:sourceIndex,_stitchCandidateIndex:candidateIndex}));
+  });
   const norm=c=>({
     game:String(c?.matchedGameId||''),
     away:normalizeTeamName(c?.matchedAway||''),
@@ -3230,8 +3250,18 @@ function parseScreenshotMultiLegTicket(){
       return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
     }
     overlapCount++;
-    // Merge the anchor evidence, then append only candidates after the matched anchor/sequence.
+    // Record the exact anchor decision so QA can see what connected the screenshots.
     const anchorLeft=hit.leftStart+hit.count-1, anchorRight=hit.rightStart+hit.count-1;
+    stitchDiagnostics.connections.push({
+      fromScreenshot:i,
+      toScreenshot:i+1,
+      count:hit.count,
+      score:hit.score,
+      leftLabel:importCandidateLabel(stitched[anchorLeft]),
+      rightLabel:importCandidateLabel(next[anchorRight]),
+      decision:'MERGE OVERLAP'
+    });
+    // Merge the anchor evidence, then append only candidates after the matched anchor/sequence.
     stitched[anchorLeft]=mergeLeg(stitched[anchorLeft],next[anchorRight]);
     for(let j=anchorRight+1;j<next.length;j++){
       const duplicateIndex=stitched.findIndex(x=>isSameLeg(x,next[j]));
@@ -3246,7 +3276,10 @@ function parseScreenshotMultiLegTicket(){
     if(idx>=0)legs[idx]=mergeLeg(legs[idx],c); else legs.push(c);
   }
   if(!legs.length)return null;
-  return {expectedLegs,isTeaser,teaserPoints,odds:Number.isFinite(odds)?odds:null,stakeUsd,units,legs,overlapCount,screenshotCount:perImage.length,
+  stitchDiagnostics.finalLegs=legs.map((c,i)=>({index:i+1,label:importCandidateLabel(c),gameId:c.matchedGameId||'',matchStatus:c.matchStatus||''}));
+  stitchDiagnostics.finalCount=legs.length;
+  stitchDiagnostics.summary=`${items.reduce((n,item)=>n+(item.candidates||[]).length,0)} raw candidates → ${perImage.reduce((n,row)=>n+row.length,0)} stitch-eligible → ${legs.length} unique legs`;
+  return {expectedLegs,isTeaser,teaserPoints,odds:Number.isFinite(odds)?odds:null,stakeUsd,units,legs,overlapCount,screenshotCount:perImage.length,stitchDiagnostics,
     complete:legs.length===expectedLegs};
 }
 function screenshotCandidateToParlayLeg(c){
@@ -3397,7 +3430,9 @@ function renderScreenshotImportFlow(){
   if(f.stage==='multi'){
     const t=f.multiLeg; const kind=t.isTeaser?'teaser':'parlay';
     const status=t.complete?`All ${t.expectedLegs} unique legs found`:`Found ${t.legs.length} of ${t.expectedLegs} unique legs`;
-    const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} overlap connection${t.overlapCount===1?'':'s'} verified across ${t.screenshotCount} screenshots.`:'Single screenshot ticket.'}</div><div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card"><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div>`).join('')}</div><div class="parsed-bet-card"><strong>${t.expectedLegs}-leg ${escapeAttr(kind)}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>`;
+    const d=t.stitchDiagnostics;
+    const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br><span>Decision: ${escapeAttr(r.decision)}</span></div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
+    const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} overlap connection${t.overlapCount===1?'':'s'} verified across ${t.screenshotCount} screenshots.`:'Single screenshot ticket.'}</div><div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card"><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div>`).join('')}</div><div class="parsed-bet-card"><strong>${t.expectedLegs}-leg ${escapeAttr(kind)}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>${diag}`;
     return shell('Stitched Multi-Leg Bet',body,`<button class="primary" data-load-stitched-parlay ${!t.complete?'disabled':''}>Load ${t.expectedLegs}-Leg ${t.isTeaser?'Teaser':'Parlay'} into Slip</button><button class="secondary" data-cancel-import-flow>Back to Screenshots</button>`);
   }
   if(f.stage==='ready'){
