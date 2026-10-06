@@ -1776,3 +1776,15 @@ html,body{min-height:100%;min-height:100dvh}
 
 /* 2.5.4.6 parser diagnostics */
 .parser-debug-panel{grid-column:1/-1;margin:0 18px 18px;padding:14px 16px;border:1px solid #cfd6df;border-radius:16px;background:#f7f9fc;color:#172033}.parser-debug-panel summary{cursor:pointer;font-weight:800;font-size:13px;line-height:1.35}.parser-debug-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin-top:12px;font-size:12px}.parser-debug-grid span{color:#6d7788}.parser-debug-grid strong{min-width:0;overflow-wrap:anywhere}.parser-debug-label{margin-top:12px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#6d7788}.parser-debug-text{max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0;padding:10px;border-radius:10px;background:#111827;color:#f9fafb;font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* TrackPicks V2.7.1 — center bottom nav on tablet / desktop */
+@media (min-width:700px){
+  .bottom-nav{
+    left:0 !important;
+    right:0 !important;
+    transform:none !important;
+    -webkit-transform:none !important;
+    margin-left:auto !important;
+    margin-right:auto !important;
+  }
+}
