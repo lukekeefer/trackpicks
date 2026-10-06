@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.0';
+const BUILD_VERSION = '2.9.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3156,9 +3156,6 @@ function parseScreenshotMultiLegTicket(){
   const items=(state.screenshotImportFiles||[]).filter(x=>String(x.ocrText||x.rawOcrText||'').trim());
   if(!items.length)return null;
   const joined=items.map(x=>normalizeOcrBetText(x.ocrText||x.rawOcrText||'')).join('\n');
-  // V2.9.0 first pass: require a sportsbook ticket header that explicitly tells us
-  // the leg count. Intentional overlap between screenshots is then used to stitch
-  // the candidate lists without guessing their relationship.
   const header=joined.match(/\b(\d{1,2})\s*leg\s+(?:(college\s+football)\s+)?(parlay|teaser)\b[^\n]*?([+-]\d{3,5})?/i);
   if(!header)return null;
   const expectedLegs=Number(header[1]);
@@ -3170,30 +3167,84 @@ function parseScreenshotMultiLegTicket(){
   }
   const teaserMatch=isTeaser?joined.match(/\bteaser\s*\+?\s*(\d+(?:\.5)?)/i):null;
   const teaserPoints=teaserMatch?Number(teaserMatch[1]):6;
-  // FanDuel puts TOTAL WAGER in the footer, which may exist only on the final image.
   const wagerMatches=[...joined.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*\n?\s*TOTAL\s+WAGER/ig)];
   const stakeUsd=wagerMatches.length?Number(wagerMatches[wagerMatches.length-1][1].replace(/,/g,'')):null;
   const units=Number.isFinite(stakeUsd)&&Number(state.standardUnitSize)>0?stakeUsd/Number(state.standardUnitSize):null;
 
   const perImage=items.map((item,sourceIndex)=>(item.candidates||[]).filter(c=>c.matchStatus==='matched').map(c=>({...c,sourceScreenshotIndex:sourceIndex})));
-  const key=c=>{
-    const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
-    const game=c.matchedGameId||`${normalizeTeamName(c.matchedAway||'')}@${normalizeTeamName(c.matchedHome||'')}`;
-    const line=Number.isFinite(Number(c.line))?Number(c.line):'';
-    return `${game}|${c.betType||''}|${sel}|${line}`.toLowerCase();
+  const norm=c=>({
+    game:String(c?.matchedGameId||''),
+    away:normalizeTeamName(c?.matchedAway||''),
+    home:normalizeTeamName(c?.matchedHome||''),
+    sel:normalizeTeamName(c?.matchedSelection||c?.selection||''),
+    type:String(c?.betType||'').toLowerCase(),
+    line:Number.isFinite(Number(c?.line))?Number(c.line):null
+  });
+  const sameGame=(a,b)=>{
+    const x=norm(a),y=norm(b);
+    if(x.game&&y.game&&x.game===y.game)return true;
+    return !!(x.away&&x.home&&x.away===y.away&&x.home===y.home);
   };
+  const overlapScore=(a,b)=>{
+    const x=norm(a),y=norm(b); let score=0;
+    if(sameGame(a,b))score+=6;
+    if(x.sel&&y.sel&&x.sel===y.sel)score+=5;
+    if(x.type&&y.type&&x.type===y.type)score+=3;
+    if(x.line!=null&&y.line!=null&&x.line===y.line)score+=1;
+    return score;
+  };
+  const isSameLeg=(a,b)=>{
+    const x=norm(a),y=norm(b);
+    // Prefer reconciled TrackPicks identity. A missing/misread sportsbook price must not break a stitch.
+    if(sameGame(a,b)&&x.sel&&x.sel===y.sel&&x.type&&x.type===y.type)return true;
+    // Cut-off OCR can lose the matchup on one copy; selection + market + line is still strong evidence.
+    if(x.sel&&x.sel===y.sel&&x.type&&x.type===y.type&&x.line!=null&&y.line!=null&&x.line===y.line)return true;
+    return overlapScore(a,b)>=11;
+  };
+  const mergeLeg=(a,b)=>mergeScreenshotCandidateEvidence(a,b);
+  const findBoundaryOverlap=(left,right)=>{
+    // Search only the tail/head boundary first. Prefer the longest ordered overlap.
+    const max=Math.min(4,left.length,right.length);
+    for(let n=max;n>=1;n--){
+      let ok=true;
+      for(let j=0;j<n;j++)if(!isSameLeg(left[left.length-n+j],right[j])){ok=false;break;}
+      if(ok)return {leftStart:left.length-n,rightStart:0,count:n,score:n*20};
+    }
+    // OCR may create an extra partial candidate at either edge. Find the strongest anchor nearby.
+    let best=null;
+    const l0=Math.max(0,left.length-4),rMax=Math.min(4,right.length);
+    for(let li=l0;li<left.length;li++)for(let ri=0;ri<rMax;ri++){
+      if(!isSameLeg(left[li],right[ri]))continue;
+      const score=overlapScore(left[li],right[ri])+(li-l0)+(rMax-ri);
+      if(!best||score>best.score)best={leftStart:li,rightStart:ri,count:1,score};
+    }
+    return best;
+  };
+
+  let stitched=perImage[0]?[...perImage[0]]:[];
   let overlapCount=0;
   for(let i=1;i<perImage.length;i++){
-    const prev=new Set(perImage[i-1].map(key));
-    if(perImage[i].some(c=>prev.has(key(c))))overlapCount++;
+    const next=perImage[i];
+    const hit=findBoundaryOverlap(stitched,next);
+    if(!hit){
+      return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
+    }
+    overlapCount++;
+    // Merge the anchor evidence, then append only candidates after the matched anchor/sequence.
+    const anchorLeft=hit.leftStart+hit.count-1, anchorRight=hit.rightStart+hit.count-1;
+    stitched[anchorLeft]=mergeLeg(stitched[anchorLeft],next[anchorRight]);
+    for(let j=anchorRight+1;j<next.length;j++){
+      const duplicateIndex=stitched.findIndex(x=>isSameLeg(x,next[j]));
+      if(duplicateIndex>=0)stitched[duplicateIndex]=mergeLeg(stitched[duplicateIndex],next[j]);
+      else stitched.push(next[j]);
+    }
   }
-  // Multiple screenshots MUST overlap consecutively. This is deliberately strict:
-  // if we cannot prove the stitch, ask for better screenshots instead of guessing.
-  if(perImage.length>1 && overlapCount<perImage.length-1){
-    return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
+  // Final de-dupe uses reconciled game/selection/market identity instead of raw OCR fingerprints.
+  const legs=[];
+  for(const c of stitched){
+    const idx=legs.findIndex(x=>isSameLeg(x,c));
+    if(idx>=0)legs[idx]=mergeLeg(legs[idx],c); else legs.push(c);
   }
-  const legs=[]; const seen=new Set();
-  for(const rows of perImage)for(const c of rows){const k=key(c);if(!seen.has(k)){seen.add(k);legs.push(c);}}
   if(!legs.length)return null;
   return {expectedLegs,isTeaser,teaserPoints,odds:Number.isFinite(odds)?odds:null,stakeUsd,units,legs,overlapCount,screenshotCount:perImage.length,
     complete:legs.length===expectedLegs};
