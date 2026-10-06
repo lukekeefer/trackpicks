@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.8.2';
+const BUILD_VERSION = '2.8.3';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3222,6 +3222,11 @@ function startScreenshotSlipWorkflow(){
 }
 function advanceScreenshotFlow(){
   const f=state.screenshotImportFlow;if(!f)return;
+  // Every stage transition starts unlocked. The previous stage may have set
+  // saving=true while its Supabase writes were in flight; carrying that flag
+  // into Review makes saveScreenshotReview() immediately return and leaves the
+  // button permanently showing "Saving…" even though the Ready wagers saved.
+  f.saving=false;
   if(f.stage==='ready')f.stage=f.duplicates.length?'duplicates':f.review.length?'review':'summary';
   else if(f.stage==='duplicates')f.stage=f.review.length?'review':'summary';
   else if(f.stage==='review')f.stage='summary';
