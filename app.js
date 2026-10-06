@@ -1,7 +1,7 @@
-const BUILD_VERSION = '2.10.1';
+const BUILD_VERSION = '3.0';
 let deployedVersion = BUILD_VERSION;
 
-function versionStamp(){ return `Version ${BUILD_VERSION}`; }
+function versionStamp(){ return 'Version 2'; }
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -140,7 +140,7 @@ const state = {
   sb: null, session: null, user: null,
   authReady: false,
   weeks: Array.from({ length: 12 }, (_, i) => ({ week: i + 1, enabled: i + 1 >= 4 })),
-  games: [], wagers: [], cautionGameIds: [], oddsHistory: [],
+  games: [], wagers: [], cautionGameIds: [], oddsHistory: [], publicBettingSnapshots: [],
   cfbTeams: [], cfbAliases: [], cfbRankings: [], lastOddsPullAt: null,
   slateDivision: 'FBS', slateConference: 'All', slateSearch: '',
   parlays: [], parlayLegs: [], slipTab: 'straight',
@@ -154,7 +154,7 @@ const state = {
   activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
   gameTeamStats: {}, gameTeamStatsLoading: false,
   standardUnitSize: null,
-  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null, screenshotImportFlow: null, screenshotImportReadyToReview: false
+  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null, screenshotImportFlow: null
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -893,13 +893,14 @@ async function syncFromCloud(){
   if(!state.sb||!state.user)return;
   state.syncing=true; render();
   try{
-    const [gamesRes,wagersRes,flagsRes,teamsRes,aliasesRes,rankingsRes]=await Promise.all([
+    const [gamesRes,wagersRes,flagsRes,teamsRes,aliasesRes,rankingsRes,publicBettingRes]=await Promise.all([
       state.sb.from('games').select('*').eq('season',2026).gte('week',0).lte('week',12),
       state.sb.from('wagers').select('*').eq('user_id',state.user.id),
       state.sb.from('user_game_flags').select('game_id,caution').eq('user_id',state.user.id).eq('caution',true),
       state.sb.from('cfb_teams').select('espn_name,espn_team_id,conference,subdivision,season,abbreviation,logo_url,short_display_name,short_nickname,smaller_font,smaller_nickname_font,extra_small_nickname_font').eq('season',2026),
       state.sb.from('cfb_team_aliases').select('provider,alias,espn_name'),
-      state.sb.from('cfb_rankings').select('season,week,poll_type,poll_name,rank,team_id,published_at').eq('season',2026).gte('week',0).lte('week',20)
+      state.sb.from('cfb_rankings').select('season,week,poll_type,poll_name,rank,team_id,published_at').eq('season',2026).gte('week',0).lte('week',20),
+      state.sb.from('public_betting_snapshots').select('game_id,bookmaker,market,side,bets_pct,handle_pct,line_value,lumify_captured_at').eq('season',2026).gte('week',0).lte('week',20).order('lumify_captured_at',{ascending:true})
     ]);
     if(gamesRes.error)throw gamesRes.error;
     if(wagersRes.error)throw wagersRes.error;
@@ -907,6 +908,7 @@ async function syncFromCloud(){
     if(teamsRes.error)throw teamsRes.error;
     if(aliasesRes.error)throw aliasesRes.error;
     if(rankingsRes.error)throw rankingsRes.error;
+    if(publicBettingRes.error)throw publicBettingRes.error;
     state.games=(gamesRes.data||[]).map(fromDbGame);
     state.wagers=(wagersRes.data||[]).map(fromDbWager);
     state.cautionGameIds=(flagsRes.data||[]).map(r=>r.game_id);
@@ -914,6 +916,7 @@ async function syncFromCloud(){
     teamLogoPreloadPromise=null;
     const logoWarmup=preloadTeamLogos();
     state.cfbAliases=(aliasesRes.data||[]).map(r=>({provider:r.provider,alias:r.alias,espnName:r.espn_name}));
+    state.publicBettingSnapshots=publicBettingRes.data||[];
     state.cfbRankings=(rankingsRes.data||[]).map(r=>({season:Number(r.season),week:Number(r.week),pollType:r.poll_type,pollName:r.poll_name,rank:Number(r.rank),teamId:String(r.team_id),publishedAt:r.published_at||null}));
     const historyRes=await fetchAllOddsHistory();
     state.oddsHistory=historyRes.error?[]:(historyRes.data||[]).map(fromDbOddsSnapshot);
@@ -1371,7 +1374,6 @@ async function queueScreenshotFiles(fileList){
   }
   state.screenshotImportFiles=[...state.screenshotImportFiles,...created];
   state.screenshotImportMessage='';
-  state.screenshotImportReadyToReview=false;
   state.showScreenshotImporter=true;
   render();
 }
@@ -1644,12 +1646,11 @@ function parseMarketHeaderNear(lines,marketIndex,market){
       // preferred; an unsigned 3/4 digit token is retained as uncertain, not guessed.
       const signed=[...statusless.matchAll(/(?:^|\s)([+-]\d{3,4})(?=\s|$)/g)].pop();
       const unsigned=!signed?[...statusless.matchAll(/(?:^|\s)(\d{3,4})(?=\s|$)/g)].pop():null;
-      // 2.9.13: preserve the sportsbook's literal selection text here. Do not
-      // globally canonicalize a header before we know its matched game; e.g.
-      // "Ohio State" must remain "Ohio State", not become "Ohio Bobcats".
-      const cut=(signed||unsigned)?.index;
-      let selection=cleanSelectionName(cut==null?statusless:statusless.slice(0,cut));
-      if(!selection)selection=knownTeam;
+      let selection=knownTeam;
+      if(!selection){
+        const cut=(signed||unsigned)?.index;
+        selection=cleanSelectionName(cut==null?statusless:statusless.slice(0,cut));
+      }
       if(selection){
         return {index:i,selection,line:null,odds:signed?Number(signed[1]):null,rawOddsToken:unsigned?unsigned[1]:'',oddsNeedsReview:!!unsigned};
       }
@@ -1660,9 +1661,7 @@ function parseMarketHeaderNear(lines,marketIndex,market){
       if(!spreadMatches.length)continue;
       const sm=spreadMatches[0];
       const line=normalizeParsedSpreadLine(sm[1].replace(/\s+/g,''),'card');
-      // 2.9.13: same invariant for spreads: keep the literal sportsbook side
-      // until game-aware reconciliation can constrain it to one of the two teams.
-      let selection=cleanSelectionName(statusless.slice(0,sm.index))||knownTeam;
+      let selection=knownTeam||cleanSelectionName(statusless.slice(0,sm.index));
       if(!selection)continue;
       const after=statusless.slice((sm.index||0)+sm[0].length);
       const signed=after.match(/(?:^|\s|[|Il•·])([+-]\d{3,4})(?=\s|$)/);
@@ -1953,54 +1952,6 @@ function importTeamForms(teamName){
   return [...forms].sort((a,b)=>b.length-a.length);
 }
 
-function importOcrConfusablePhraseMatch(text,form){
-  // 2.9.3: OCR commonly reads an uppercase I as lowercase l ("Iowa" -> "lowa").
-  // Treat that as a strong match only when every other character in the phrase agrees.
-  // This is deliberately generic and phrase-scoped; it is not a BYU/Iowa exception.
-  const a=normalizeImportTeamText(text).split(' ').filter(Boolean);
-  const b=normalizeImportTeamText(form).split(' ').filter(Boolean);
-  if(!a.length||!b.length||a.length<b.length)return false;
-  const tokenMatch=(x,y)=>{
-    if(x===y)return true;
-    if(x.length!==y.length||x.length<2)return false;
-    let diffs=0;
-    for(let i=0;i<x.length;i++){
-      if(x[i]===y[i])continue;
-      if(i===0 && ((x[i]==='l'&&y[i]==='i')||(x[i]==='i'&&y[i]==='l'))){diffs++;continue;}
-      return false;
-    }
-    return diffs===1;
-  };
-  for(let start=0;start<=a.length-b.length;start++){
-    let ok=true;
-    for(let i=0;i<b.length;i++)if(!tokenMatch(a[start+i],b[i])){ok=false;break;}
-    if(ok)return true;
-  }
-  return false;
-}
-
-function importOcrSchoolPrefixMatch(text,form){
-  // 2.9.5: sportsbook event rows often use the school name while TrackPicks stores
-  // the full ESPN name including mascot ("Iowa State" vs "Iowa State Cyclones").
-  // Compare the OCR phrase against the leading canonical tokens and allow the same
-  // first-letter I/l OCR confusion handled by importOcrConfusablePhraseMatch.
-  const a=normalizeImportTeamText(text).split(' ').filter(Boolean);
-  const b=normalizeImportTeamText(form).split(' ').filter(Boolean);
-  if(a.length<2 || b.length<=a.length)return false;
-  const tokenMatch=(x,y)=>{
-    if(x===y)return true;
-    if(x.length!==y.length||x.length<2)return false;
-    let diffs=0;
-    for(let i=0;i<x.length;i++){
-      if(x[i]===y[i])continue;
-      if(i===0 && ((x[i]==='l'&&y[i]==='i')||(x[i]==='i'&&y[i]==='l'))){diffs++;continue;}
-      return false;
-    }
-    return diffs===1;
-  };
-  return a.every((token,i)=>tokenMatch(token,b[i]));
-}
-
 function importTeamTextScore(text,teamName){
   const t=normalizeImportTeamText(text);
   if(!t)return 0;
@@ -2011,8 +1962,6 @@ function importTeamTextScore(text,teamName){
     else if(t.endsWith(' '+form) && t.length-form.length<=4)best=Math.max(best,96); // OCR prefix artifact
     else if(t.startsWith(form+' ') && t.length-form.length<=12)best=Math.max(best,91);
     else if((` ${t} `).includes(` ${form} `))best=Math.max(best,88);
-    else if(form.length>=4 && importOcrConfusablePhraseMatch(t,form))best=Math.max(best,94);
-    else if(form.length>=4 && importOcrSchoolPrefixMatch(t,form))best=Math.max(best,94);
     else if(form.length>=4 && (` ${form} `).includes(` ${t} `))best=Math.max(best,78);
   }
   return best;
@@ -2094,41 +2043,18 @@ function extractImportMatchupPair(text){
   return away&&home?{away,home}:null;
 }
 
-function importTruncatedTeamSideScore(text,teamName){
-  const raw=normalizeImportTeamText(text).replace(/\s+/g,' ').trim();
-  if(raw.length<4)return 0;
-  let best=0;
-  for(const form of importTeamForms(teamName)){
-    // Sportsbook rows often end in an OCR/UI ellipsis (Kans..., North Caro...).
-    // A four+ character leading fragment is safe only as matchup-side evidence;
-    // it is never used by itself to choose a wager selection.
-    if(form.startsWith(raw) && form.length>raw.length)best=Math.max(best,86);
-  }
-  return best;
-}
-
 function directImportMatchupForGame(candidate,game){
   const sources=[candidate?.eventText,candidate?.contextText].filter(Boolean);
   for(const source of sources){
     const pair=extractImportMatchupPair(source);
     if(!pair)continue;
-    const away=Math.max(importTeamTextScore(pair.away,game.away),importTruncatedTeamSideScore(pair.away,game.away));
-    const home=Math.max(importTeamTextScore(pair.home,game.home),importTruncatedTeamSideScore(pair.home,game.home));
-    // Always score selection from the raw sportsbook wording when available.
-    // This prevents a premature generic alias (Ohio) from replacing a more
-    // specific selection (Ohio State) before the matchup is known.
-    const selectionSource=candidate.rawSelection||candidate.selection||'';
-    const selAway=importTeamTextScore(selectionSource,game.away);
-    const selHome=importTeamTextScore(selectionSource,game.home);
+    const away=importTeamTextScore(pair.away,game.away);
+    const home=importTeamTextScore(pair.home,game.home);
     if(away>=78&&home>=78){
+      const selAway=importTeamTextScore(candidate.selection||'',game.away);
+      const selHome=importTeamTextScore(candidate.selection||'',game.home);
       return {score:1000+away+home,selectionTeam:selAway>=78||selHome>=78?(selAway>=selHome?game.away:game.home):null};
     }
-    // 2.9.9: one readable matchup side + a selection that identifies the
-    // opposite side is enough to prove a unique game. This covers cases such
-    // as "Miami Florida @ Clemson" where the sportsbook school wording differs
-    // from ESPN's canonical team name.
-    if(away>=78&&selHome>=78)return {score:940+away+selHome,selectionTeam:game.home};
-    if(home>=78&&selAway>=78)return {score:940+home+selAway,selectionTeam:game.away};
   }
   return null;
 }
@@ -2152,63 +2078,16 @@ function bestImportGameMatch(candidate,games){
   return confident?best:null;
 }
 
-function buildImportReconciliationDiagnostic(candidate,activeWeek){
-  const pair=extractImportMatchupPair(candidate?.eventText||'');
-  const games=weekGames(Number(activeWeek));
-  const tested=games.map(game=>{
-    const pairAway=pair?Math.max(importTeamTextScore(pair.away,game.away),importTruncatedTeamSideScore(pair.away,game.away)):0;
-    const pairHome=pair?Math.max(importTeamTextScore(pair.home,game.home),importTruncatedTeamSideScore(pair.home,game.home)):0;
-    const selAway=importTeamTextScore(candidate?.selection||'',game.away);
-    const selHome=importTeamTextScore(candidate?.selection||'',game.home);
-    const direct=directImportMatchupForGame(candidate,game);
-    const scored=scoreImportCandidateForGame(candidate,game);
-    return {
-      gameId:game.id,away:game.away,home:game.home,
-      pairAway,pairHome,selAway,selHome,
-      directScore:direct?.score||0,normalScore:scored?.score||0,
-      selectionTeam:direct?.selectionTeam||scored?.selectionTeam||''
-    };
-  }).sort((a,b)=>Math.max(b.directScore,b.normalScore,b.pairAway+b.pairHome)-Math.max(a.directScore,a.normalScore,a.pairAway+a.pairHome)).slice(0,5);
-  const bestDirect=tested.reduce((m,x)=>Math.max(m,x.directScore),0);
-  const bestNormal=tested.reduce((m,x)=>Math.max(m,x.normalScore),0);
-  let reason='No Week '+activeWeek+' game met the reconciliation threshold.';
-  if(pair && tested.length){
-    const top=tested[0];
-    if(top.pairAway<78||top.pairHome<78)reason=`Explicit matchup failed side threshold (away ${top.pairAway}/78, home ${top.pairHome}/78).`;
-    else if(!bestDirect)reason='Explicit matchup sides looked plausible but direct matchup resolution did not produce a unique match.';
-  }
-  return {
-    parsedAway:pair?.away||'',parsedHome:pair?.home||'',
-    normalizedAway:pair?normalizeImportTeamText(pair.away):'',normalizedHome:pair?normalizeImportTeamText(pair.home):'',
-    selection:candidate?.selection||'',normalizedSelection:normalizeImportTeamText(candidate?.selection||''),
-    activeWeek:Number(activeWeek),bestDirect,bestNormal,reason,tested
-  };
-}
-
 function canonicalImportSelectionForMatchedGame(candidate,game){
   if(!candidate||!game||candidate.betType==='Total')return candidate?.selection||'';
-  const source=candidate.rawSelection||candidate.selection||'';
-
-  // 2.9.11: once the game itself is known, let the sportsbook's explicit matchup
-  // wording identify the selected SIDE before any global alias/team scoring runs.
-  // This prevents a shorter global identity (for example Ohio) from stealing the
-  // exact OCR selection "Ohio State" in an Ohio State @ Iowa wager.
-  const pair=extractImportMatchupPair(candidate.eventText||'');
-  if(pair){
-    const raw=normalizeImportTeamText(source);
-    const a=normalizeImportTeamText(pair.away),h=normalizeImportTeamText(pair.home);
-    const sideMatch=(side)=>side && (raw===side || raw.startsWith(side+' ') || side.startsWith(raw+' '));
-    if(sideMatch(a) && !sideMatch(h))return game.away;
-    if(sideMatch(h) && !sideMatch(a))return game.home;
-  }
-
-  // Only compare against the two teams in the already-resolved game. Global team
-  // aliases are useful evidence, but they cannot introduce a third team here.
+  const source=[candidate.rawSelection,candidate.selection].filter(Boolean).join(' ');
   const awayScore=importTeamTextScore(source,game.away);
   const homeScore=importTeamTextScore(source,game.home);
   if(awayScore>=60||homeScore>=60)return awayScore>=homeScore?game.away:game.home;
 
-  // Tolerate light OCR pollution around an otherwise recognizable matchup side.
+  // If OCR polluted the wager header (for example "C 2 Missouri"), use the
+  // explicit matchup side as a second deterministic bridge to the canonical game.
+  const pair=extractImportMatchupPair(candidate.eventText||'');
   if(pair){
     const raw=normalizeImportTeamText(source);
     const a=normalizeImportTeamText(pair.away),h=normalizeImportTeamText(pair.home);
@@ -2340,13 +2219,6 @@ function recoverDraftKingsSettledMatchup(candidate){
 }
 function normalizeCandidateAgainstKnownGames(candidate){
   if(!candidate)return candidate;
-  candidate._selectionTrace=candidate._selectionTrace||{};
-  candidate._selectionTrace.rawSelection=String(candidate.rawSelection||'');
-  candidate._selectionTrace.beforeNormalize=String(candidate.selection||'');
-  // Keep the sportsbook's original selection text permanently. Reconciliation
-  // may canonicalize candidate.selection, but rawSelection remains authoritative
-  // for resolving specific names such as "Ohio State" vs "Ohio".
-  if(!candidate.rawSelection && candidate.selection)candidate.rawSelection=candidate.selection;
   const evidence=[candidate.selection,candidate.eventText,candidate.contextText].filter(Boolean).join('\n');
   const clues=extractImportTeamClues(evidence);
   const selectionClues=extractImportTeamClues(candidate.selection||'');
@@ -2354,7 +2226,6 @@ function normalizeCandidateAgainstKnownGames(candidate){
     const best=selectionClues[0];
     if(best.score>=88 && (!selectionClues[1] || best.score-selectionClues[1].score>=4)) candidate.selection=best.team;
   }
-  candidate._selectionTrace.afterNormalize=String(candidate.selection||'');
   // Recover a clean event from any two-team context inside the same wager card.
   if((!candidate.eventText || extractImportTeamClues(candidate.eventText).length<2) && clues.length>=2){
     const keys=new Set(clues.slice(0,6).map(x=>normalizeTeamName(x.team)));
@@ -2400,10 +2271,7 @@ function finalizeScreenshotCandidateReadiness(candidate){
 }
 
 function matchScreenshotCandidateToWeek(candidate,week){
-  candidate._selectionTrace=candidate._selectionTrace||{};
-  candidate._selectionTrace.matchEntry=String(candidate.selection||'');
   candidate=normalizeCandidateAgainstKnownGames(candidate);
-  candidate._selectionTrace.afterNormalizeForMatch=String(candidate.selection||'');
   const activeWeek=Number(week);
 
   // 2.5.4.14 collapsed-row timestamp guard. A collapsed wager can never be
@@ -2429,14 +2297,9 @@ function matchScreenshotCandidateToWeek(candidate,week){
     candidate.matchedWeek=activeWeek;
     candidate.matchedAway=inWeek.game.away;
     candidate.matchedHome=inWeek.game.home;
-    candidate._selectionTrace.beforeMatchedGameCanonical=String(candidate.selection||'');
-    candidate._selectionTrace.rawAtMatchedGameCanonical=String(candidate.rawSelection||'');
-    const canonicalSelected=candidate.betType==='Total'?candidate.selection:(canonicalImportSelectionForMatchedGame(candidate,inWeek.game)||inWeek.selectionTeam||candidate.dkRecoveredSelection);
-    candidate._selectionTrace.canonicalResult=String(canonicalSelected||'');
+    const canonicalSelected=candidate.betType==='Total'?candidate.selection:(inWeek.selectionTeam||candidate.dkRecoveredSelection||canonicalImportSelectionForMatchedGame(candidate,inWeek.game));
     if(candidate.betType!=='Total'&&canonicalSelected)candidate.selection=canonicalSelected;
     candidate.matchedSelection=canonicalSelected||candidate.selection;
-    candidate._selectionTrace.afterMatchedGameCanonical=String(candidate.selection||'');
-    candidate._selectionTrace.matchedSelection=String(candidate.matchedSelection||'');
     candidate.reviewState=`Matched Week ${activeWeek}`;
     candidate.matchStatus='matched';
     return finalizeScreenshotCandidateReadiness(candidate);
@@ -2455,15 +2318,13 @@ function matchScreenshotCandidateToWeek(candidate,week){
     candidate.matchedHome=outside.game.home;
     if(candidate.betType==='Total')candidate.matchedSelection=candidate.selection;
     else{
-      const selected=canonicalImportSelectionForMatchedGame(candidate,outside.game)||outside.selectionTeam||candidate.dkRecoveredSelection;
+      const selected=outside.selectionTeam||candidate.dkRecoveredSelection||canonicalImportSelectionForMatchedGame(candidate,outside.game);
       if(selected){candidate.selection=selected;candidate.matchedSelection=selected;}
     }
   }else{
     candidate.detectedWeek=null;
     candidate.reviewState='Needs game match';
     candidate.matchStatus='unmatched';
-    // 2.9.4: retain the exact reconciliation decision path for diagnostics.
-    candidate.reconciliationDiagnostic=buildImportReconciliationDiagnostic(candidate,activeWeek);
   }
   return finalizeScreenshotCandidateReadiness(candidate);
 }
@@ -2611,7 +2472,6 @@ async function processScreenshotBatch(){
   }finally{
     try{await worker?.terminate();}catch(_e){}
     state.screenshotImportProcessing=false;
-    if(state.screenshotImportFiles.some(x=>(x.candidates||[]).length||x.status==='Needs review')) state.screenshotImportReadyToReview=true;
     render();
   }
 }
@@ -2692,7 +2552,7 @@ function render(){
   if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
   if(!cloudConfigured()){ app.innerHTML=renderCloudSetup(); bindAuth(); return; }
   if(!state.user){ app.innerHTML=renderAuth(); bindAuth(); return; }
-  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.screenshotImportFlow?renderScreenshotImportFlow():''}${state.historyChartKind?renderHistoryChart():''}${state.activeTeamId?renderTeamScreen():''}`;
+  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.screenshotImportFlow?renderScreenshotImportFlow():''}${state.historyChartKind?(state.historyChartKind==='Public'?renderPublicBettingChart():renderHistoryChart()):''}${state.activeTeamId?renderTeamScreen():''}`;
   bind();
 }
 
@@ -2734,7 +2594,7 @@ function marketTopbar(){ return appHeader(headerWeekSelect()); }
 
 function topbar(){
   if(state.view==='market')return marketTopbar();
-  if(state.view==='slip')return appHeader(`<button type="button" class="tp-import-header-btn" data-launch-import>Import</button>`);
+  if(state.view==='slip')return appHeader(`<div class="app-header-screen-label">Slip</div>`);
   if(state.view==='dashboard')return appHeader(`<div class="app-header-screen-label">Dashboard</div>`);
   if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
   return appHeader();
@@ -2930,7 +2790,8 @@ function renderParlaysSlip(){
 }
 function renderSlip(){
   const pushControls=`<div class="push-results-row"><button class="primary push-results-btn" data-push-results ${state.pushingResults?'disabled':''}>${state.pushingResults?'Checking Results…':'Push Results'}</button>${state.pushResultsMessage?`<div class="push-results-message">${escapeAttr(state.pushResultsMessage)}</div>`:''}</div>`;
-  return `<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
+  const importBar=`<div class="screenshot-import-launch"><div><strong>Screenshot Import</strong><span>Bulk upload sportsbook screenshots and review bets before saving.</span></div><button type="button" class="secondary screenshot-import-btn" data-open-screenshot-import>Import Screenshots</button><input type="file" data-screenshot-file-input accept="image/*" multiple hidden></div>`;
+  return `${importBar}<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
 }
 function wagerMovementSignals(g){
   const history=oddsHistoryForGame(g);
@@ -3149,6 +3010,74 @@ async function openTeamScreen(teamName){
   render();
 }
 
+
+function latestPublicSpread(g){
+  const rows=(state.publicBettingSnapshots||[]).filter(r=>r.game_id===g.id&&r.market==='spread');
+  if(!rows.length)return null;
+  const latest=rows.reduce((m,r)=>!m||new Date(r.lumify_captured_at)>new Date(m)?r.lumify_captured_at:m,null);
+  const snap=rows.filter(r=>r.lumify_captured_at===latest);
+  const byBook={};
+  for(const r of snap){
+    if(!byBook[r.bookmaker])byBook[r.bookmaker]={bookmaker:r.bookmaker};
+    byBook[r.bookmaker][r.side]=r;
+  }
+  const books=Object.values(byBook).filter(b=>b.home&&b.away);
+  if(books.length<2)return null;
+  const homeBets=books.map(b=>Number(b.home.bets_pct)).filter(Number.isFinite);
+  const awayBets=books.map(b=>Number(b.away.bets_pct)).filter(Number.isFinite);
+  if(homeBets.length<2||awayBets.length<2)return null;
+  const homeMajor=homeBets.every(v=>v>50), awayMajor=awayBets.every(v=>v>50);
+  if(!homeMajor&&!awayMajor)return {mixed:true,books,latest};
+  const side=homeMajor?'home':'away';
+  const team=side==='home'?g.home:g.away;
+  const bets=books.map(b=>Number(b[side]?.bets_pct)).filter(Number.isFinite);
+  const money=books.map(b=>Number(b[side]?.handle_pct)).filter(Number.isFinite);
+  const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;
+  return {mixed:false,side,team,bets:avg(bets),money:avg(money),books,latest};
+}
+function renderPublicPickSticker(g,side){
+  const p=latestPublicSpread(g);
+  if(!p||p.mixed||p.side!==side)return '';
+  return `<div class="public-pick-sticker public-pick-${side}" aria-label="Public pick ${escapeAttr(p.team)} ${p.bets}% bets${p.money==null?'':`, ${p.money}% money`}">
+    <div class="public-sticker-starburst"><span class="public-sticker-kicker">PUBLIC PICK</span><strong>${p.bets}%</strong><span class="public-sticker-money">MONEY ${p.money==null?'—':`${p.money}%`}</span></div>
+    <div class="public-sticker-ribbons"><i></i><i></i></div>
+  </div>`;
+}
+function publicBettingSeries(g){
+  const rows=(state.publicBettingSnapshots||[]).filter(r=>r.game_id===g.id&&r.market==='spread');
+  const times=[...new Set(rows.map(r=>r.lumify_captured_at))].sort((a,b)=>new Date(a)-new Date(b));
+  return times.map(time=>{
+    const snap=rows.filter(r=>r.lumify_captured_at===time);
+    const away=snap.filter(r=>r.side==='away'&&Number.isFinite(Number(r.bets_pct)));
+    const handles=snap.filter(r=>r.side==='away'&&Number.isFinite(Number(r.handle_pct)));
+    const avg=a=>a.length?a.reduce((n,r)=>n+Number(r.bets_pct??r.handle_pct),0)/a.length:null;
+    const bets=away.length?away.reduce((n,r)=>n+Number(r.bets_pct),0)/away.length:null;
+    const money=handles.length?handles.reduce((n,r)=>n+Number(r.handle_pct),0)/handles.length:null;
+    return {time,bets,money};
+  }).filter(p=>p.bets!=null);
+}
+function renderPublicBettingChart(){
+  const g=gameById(state.activeGameId); if(!g)return '';
+  const points=publicBettingSeries(g), latest=latestPublicSpread(g);
+  const W=640,H=260,pad=42;
+  let svg='<div class="chart-empty">Not enough public-betting snapshots to graph yet.</div>';
+  if(points.length){
+    const x=i=>points.length===1?W/2:pad+i*(W-pad*2)/(points.length-1), y=v=>H-pad-(v/100)*(H-pad*2);
+    const path=key=>points.filter(p=>p[key]!=null).map((p,i)=>`${i?'L':'M'} ${x(i)} ${y(p[key])}`).join(' ');
+    svg=`<svg class="history-chart public-history-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Public betting history">
+      ${[0,25,50,75,100].map(v=>`<line class="chart-grid-line" x1="${pad}" y1="${y(v)}" x2="${W-pad}" y2="${y(v)}"></line><text class="chart-axis-text" x="7" y="${y(v)+4}">${v}%</text>`).join('')}
+      <path class="public-chart-bets" d="${path('bets')}"></path>${points.some(p=>p.money!=null)?`<path class="public-chart-money" d="${path('money')}"></path>`:''}
+      ${points.map((p,i)=>`<circle class="public-dot-bets" cx="${x(i)}" cy="${y(p.bets)}" r="4"></circle>${p.money==null?'':`<circle class="public-dot-money" cx="${x(i)}" cy="${y(p.money)}" r="4"></circle>`}`).join('')}
+    </svg>`;
+  }
+  const books=latest?.books||[];
+  const side=latest&&!latest.mixed?latest.side:null;
+  return `<div class="overlay history-overlay"><section class="history-sheet public-history-sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">Public Betting</h2><div class="detail-meta">${escapeAttr(g.away)} @ ${escapeAttr(g.home)} · Spread</div></div><button class="icon-btn" data-close-history>✕</button></div>
+    <div class="public-chart-legend"><span><i class="legend-bets"></i>Public bets — ${escapeAttr(g.away)}</span><span><i class="legend-money"></i>Money — ${escapeAttr(g.away)}</span></div>${svg}
+    <div class="public-book-grid">${books.map(b=>{const r=side?b[side]:b.away;return `<div><span>${escapeAttr(b.bookmaker==='draftkings'?'DraftKings':b.bookmaker==='betmgm'?'BetMGM':'Circa')}</span><strong>${r?.bets_pct??'—'}% bets</strong><small>${r?.handle_pct==null?'Money unavailable':`${r.handle_pct}% money`}</small></div>`}).join('')}</div>
+    <div class="chart-note">Raw sportsbook snapshots collected by TrackPicks. The sticker only appears when at least two books agree on the public side.</div></section></div>`;
+}
+
 function renderGameSheet(){
   const g=gameById(state.activeGameId);
   if(!g)return'';
@@ -3182,6 +3111,7 @@ function renderGameSheet(){
           <div class="matchup-team-name">${escapeAttr(g.away)}</div>
           <div class="matchup-team-role">Away</div>
           ${renderGameTeamRecord(g.away)}
+          ${renderPublicPickSticker(g,'away')}
         </div>
 
         <div class="matchup-center reference-at"><div class="matchup-at">@</div></div>
@@ -3191,6 +3121,7 @@ function renderGameSheet(){
           <div class="matchup-team-name">${escapeAttr(g.home)}</div>
           <div class="matchup-team-role">Home</div>
           ${renderGameTeamRecord(g.home)}
+          ${renderPublicPickSticker(g,'home')}
         </div>
       </section>
 
@@ -3214,6 +3145,7 @@ function renderGameSheet(){
         <div class="history-buttons">
           <button type="button" class="secondary history-btn" data-open-history="Spread" ${historyChartPoints(g,'Spread').length<2?'disabled':''}>Spread Graph</button>
           <button type="button" class="secondary history-btn" data-open-history="Total" ${historyChartPoints(g,'Total').length<2?'disabled':''}>Total Graph</button>
+          <button type="button" class="secondary history-btn public-betting-btn" data-open-history="Public" ${(state.publicBettingSnapshots||[]).some(r=>r.game_id===g.id)?'':'disabled'}>Public Betting</button>
         </div>
       </section>
 
@@ -3256,21 +3188,9 @@ function renderGameSheet(){
 
 
 // 2.5.5: reconcile all screenshot evidence before anything is offered to the Slip.
-function screenshotSelectionFitsMatchedGame(c){
-  if(!c||c.matchStatus!=='matched')return false;
-  const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
-  if(!sel)return false;
-  const type=String(c.betType||'').toLowerCase();
-  if(type==='total')return /^(over|under)(?:\b|\s)/i.test(String(c.matchedSelection||c.selection||'').trim());
-  const away=normalizeTeamName(c.matchedAway||'');
-  const home=normalizeTeamName(c.matchedHome||'');
-  return !!((away&&sel===away)||(home&&sel===home));
-}
 function screenshotCandidateQuality(c){
   if(!c)return 0;
-  // 2.9.15: prefer a candidate whose selection actually resolves inside its matched game.
-  // This lets a complete repeated leg beat a clipped/UI-contaminated copy of that same leg.
-  return (c.matchStatus==='matched'?30:c.matchStatus==='wrong-week'?20:0)+(c.selection?8:0)+(screenshotSelectionFitsMatchedGame(c)?10:0)+(Number.isFinite(Number(c.line))?5:0)+(Number.isFinite(Number(c.odds))&&!c.oddsNeedsReview?5:0)+(Number.isFinite(Number(c.units))&&Number(c.units)>0?5:0)+(c.eventText?4:0)+(c.sourceBetId?12:0);
+  return (c.matchStatus==='matched'?30:c.matchStatus==='wrong-week'?20:0)+(c.selection?8:0)+(Number.isFinite(Number(c.line))?5:0)+(Number.isFinite(Number(c.odds))&&!c.oddsNeedsReview?5:0)+(Number.isFinite(Number(c.units))&&Number(c.units)>0?5:0)+(c.eventText?4:0)+(c.sourceBetId?12:0);
 }
 function screenshotCandidateMergeKey(c){
   if(c?.sourceBetId)return `id:${String(c.sourceBetId).toLowerCase()}`;
@@ -3306,302 +3226,6 @@ function reconcileScreenshotImportBatch(){
   }
   return groups.map(g=>finalizeScreenshotCandidateReadiness(g.candidate));
 }
-function parseScreenshotMultiLegTicket(){
-  const items=(state.screenshotImportFiles||[]).filter(x=>String(x.ocrText||x.rawOcrText||'').trim());
-  if(!items.length)return null;
-  const normalizedTexts=items.map(x=>normalizeOcrBetText(x.ocrText||x.rawOcrText||''));
-  const joined=normalizedTexts.join('\n');
-  const header=joined.match(/\b(\d{1,2})\s*leg\s+(?:(college\s+football)\s+)?(parlay|teaser)\b/i);
-  if(!header)return null;
-  const expectedLegs=Number(header[1]);
-  if(!Number.isFinite(expectedLegs)||expectedLegs<2)return null;
-  const isTeaser=header[3].toLowerCase()==='teaser';
-  // 2.10: one multi-leg ticket per batch. Repeated copies of the same header are fine,
-  // but conflicting leg-count/type headers indicate multiple parlays/teasers.
-  const headerSigs=[...joined.matchAll(/\b(\d{1,2})\s*leg\s+(?:(?:college\s+football)\s+)?(parlay|teaser)\b/gi)].map(m=>`${m[1]}:${m[2].toLowerCase()}`);
-  if(new Set(headerSigs).size>1)return {error:'Multiple multi-leg bets detected. For now, import each parlay or teaser as its own separate batch.'};
-
-  // 2.9.6: ticket-level metadata belongs to the stitched bet, not an individual leg.
-  // Parse every screenshot independently so a header on image 1 and footer on image 2 combine cleanly.
-  let odds=null,oddsSource=null,stakeUsd=null,stakeSource=null,totalPayoutUsd=null,payoutSource=null;
-  normalizedTexts.forEach((text,sourceIndex)=>{
-    const lines=String(text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
-    for(const line of lines){
-      if(odds==null){
-        const hm=line.match(/\b\d{1,2}\s*leg\s+(?:(?:college\s+football)\s+)?(?:parlay|teaser)\b[^\n]*?([+-]\d{3,5})\b/i);
-        if(hm){odds=Number(hm[1]);oddsSource=sourceIndex;}
-      }
-    }
-    // FanDuel OCR commonly flattens the two-column footer into:
-    // "$10.00 $104.72 TOTAL WAGER TOTAL PAYOUT". Keep the values paired with their labels.
-    const paired=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\s+(?:TOTAL\s+)?WAGER\s+(?:TOTAL\s+)?PAYOUT/i);
-    const returnedPair=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\s+(?:TOTAL\s+)?WAGER\s+RETURNED/i);
-    if(paired){
-      if(stakeUsd==null){stakeUsd=Number(paired[1].replace(/,/g,''));stakeSource=sourceIndex;}
-      if(totalPayoutUsd==null){totalPayoutUsd=Number(paired[2].replace(/,/g,''));payoutSource=sourceIndex;}
-    }else if(returnedPair){
-      // Settled FanDuel tickets use "$5.00 $0.00 / TOTAL WAGER RETURNED".
-      // The second amount is a settlement return, never the wager.
-      if(stakeUsd==null){stakeUsd=Number(returnedPair[1].replace(/,/g,''));stakeSource=sourceIndex;}
-    }else{
-      const wm=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\n\s*)?TOTAL\s+WAGER/i);
-      const pm=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\n\s*)?TOTAL\s+PAYOUT/i);
-      if(wm&&stakeUsd==null){stakeUsd=Number(wm[1].replace(/,/g,''));stakeSource=sourceIndex;}
-      if(pm&&totalPayoutUsd==null){totalPayoutUsd=Number(pm[1].replace(/,/g,''));payoutSource=sourceIndex;}
-    }
-  });
-  const teaserMatch=isTeaser?joined.match(/\bteaser\s*\+?\s*(\d+(?:\.5)?)/i):null;
-  const teaserPoints=teaserMatch?Number(teaserMatch[1]):6;
-  const units=Number.isFinite(stakeUsd)&&Number(state.standardUnitSize)>0?stakeUsd/Number(state.standardUnitSize):null;
-
-  // 2.9.3+ stitch diagnostics: preserve every OCR candidate long enough to explain why it did or did not enter stitching.
-  const stitchDiagnostics={screenshots:[],connections:[],expectedLegs,metadata:{
-    odds:Number.isFinite(odds)?odds:null,oddsSource,
-    stakeUsd:Number.isFinite(stakeUsd)?stakeUsd:null,stakeSource,
-    totalPayoutUsd:Number.isFinite(totalPayoutUsd)?totalPayoutUsd:null,payoutSource
-  }};
-  const perImage=items.map((item,sourceIndex)=>{
-    const raw=(item.candidates||[]);
-    const rows=raw.map((c,candidateIndex)=>({
-      candidateIndex,
-      label:importCandidateLabel(c),
-      selection:c.matchedSelection||c.selection||'',
-      betType:c.betType||'',
-      line:Number.isFinite(Number(c.line))?Number(c.line):null,
-      eventText:c.eventText||'',
-      matchStatus:c.matchStatus||'unknown',
-      matchedGameId:c.matchedGameId||'',
-      matchedAway:c.matchedAway||'',
-      matchedHome:c.matchedHome||'',
-      matchedSelection:c.matchedSelection||'',
-      rawSelection:c.rawSelection||'',
-      currentSelection:c.selection||'',
-      selectionTrace:c._selectionTrace||null,
-      reconciliationDiagnostic:c.reconciliationDiagnostic||null,
-      decision:c.matchStatus==='matched'?'ELIGIBLE FOR STITCH':`EXCLUDED BEFORE STITCH — matchStatus=${c.matchStatus||'unknown'}`
-    }));
-    stitchDiagnostics.screenshots.push({sourceIndex,rawCount:raw.length,eligibleCount:rows.filter(r=>r.matchStatus==='matched').length,candidates:rows});
-    // 2.9.10: reconciliation may change identity, never sportsbook order. Derive an
-    // immutable visual/OCR position from the original screenshot text and carry it
-    // through stitching. Event rows are preferred over selection text because ticket
-    // summaries can repeat selections near the top of the screenshot.
-    const ocrHaystack=normalizeImportTeamText(item.ocrText||item.rawOcrText||'');
-    const withPosition=raw.map((c,rawIndex)=>{
-      const eventNeedle=normalizeImportTeamText(c.eventText||'');
-      const selectionNeedle=normalizeImportTeamText(c.rawSelection||c.selection||'');
-      let ocrPosition=eventNeedle.length>=6?ocrHaystack.indexOf(eventNeedle):-1;
-      if(ocrPosition<0&&selectionNeedle.length>=3)ocrPosition=ocrHaystack.indexOf(selectionNeedle);
-      if(ocrPosition<0)ocrPosition=1000000+rawIndex;
-      return {...c,sourceScreenshotIndex:sourceIndex,_sourceRawIndex:rawIndex,_sourceOcrPosition:ocrPosition};
-    });
-    return withPosition.filter(c=>c.matchStatus==='matched').sort((a,b)=>a._sourceOcrPosition-b._sourceOcrPosition||a._sourceRawIndex-b._sourceRawIndex).map((c,candidateIndex)=>({...c,_stitchCandidateIndex:candidateIndex}));
-  });
-  const norm=c=>({
-    game:String(c?.matchedGameId||''),
-    away:normalizeTeamName(c?.matchedAway||''),
-    home:normalizeTeamName(c?.matchedHome||''),
-    sel:normalizeTeamName(c?.matchedSelection||c?.selection||''),
-    type:String(c?.betType||'').toLowerCase(),
-    line:Number.isFinite(Number(c?.line))?Number(c.line):null
-  });
-  const sameGame=(a,b)=>{
-    const x=norm(a),y=norm(b);
-    if(x.game&&y.game&&x.game===y.game)return true;
-    return !!(x.away&&x.home&&x.away===y.away&&x.home===y.home);
-  };
-  const overlapScore=(a,b)=>{
-    const x=norm(a),y=norm(b); let score=0;
-    if(sameGame(a,b))score+=6;
-    if(x.sel&&y.sel&&x.sel===y.sel)score+=5;
-    if(x.type&&y.type&&x.type===y.type)score+=3;
-    if(x.line!=null&&y.line!=null&&x.line===y.line)score+=1;
-    return score;
-  };
-  const isSameLeg=(a,b)=>{
-    const x=norm(a),y=norm(b);
-    // Prefer reconciled TrackPicks identity. A missing/misread sportsbook price must not break a stitch.
-    if(sameGame(a,b)&&x.sel&&x.sel===y.sel&&x.type&&x.type===y.type)return true;
-    // 2.9.15: a repeated leg may be clipped on one screenshot so the event survives but the
-    // selection does not (for example sportsbook chrome is OCR'd as the selection). If the
-    // other copy resolves cleanly to the same matched game and market, merge the degraded copy
-    // into the complete one. Never merge when both selections are unresolved.
-    if(sameGame(a,b)&&x.type&&x.type===y.type){
-      const aFits=screenshotSelectionFitsMatchedGame(a),bFits=screenshotSelectionFitsMatchedGame(b);
-      if(aFits!==bFits)return true;
-    }
-    // Cut-off OCR can lose the matchup on one copy; selection + market + line is still strong evidence.
-    if(x.sel&&x.sel===y.sel&&x.type&&x.type===y.type&&x.line!=null&&y.line!=null&&x.line===y.line)return true;
-    return overlapScore(a,b)>=11;
-  };
-  const mergeLeg=(a,b)=>mergeScreenshotCandidateEvidence(a,b);
-  const findBoundaryOverlap=(left,right)=>{
-    // Search only the tail/head boundary first. Prefer the longest ordered overlap.
-    const max=Math.min(4,left.length,right.length);
-    for(let n=max;n>=1;n--){
-      let ok=true;
-      for(let j=0;j<n;j++)if(!isSameLeg(left[left.length-n+j],right[j])){ok=false;break;}
-      if(ok)return {leftStart:left.length-n,rightStart:0,count:n,score:n*20};
-    }
-    // OCR may create an extra partial candidate at either edge. Find the strongest anchor nearby.
-    let best=null;
-    const l0=Math.max(0,left.length-4),rMax=Math.min(4,right.length);
-    for(let li=l0;li<left.length;li++)for(let ri=0;ri<rMax;ri++){
-      if(!isSameLeg(left[li],right[ri]))continue;
-      const score=overlapScore(left[li],right[ri])+(li-l0)+(rMax-ri);
-      if(!best||score>best.score)best={leftStart:li,rightStart:ri,count:1,score};
-    }
-    return best;
-  };
-
-  // 2.9.8: determine screenshot order from RAW parsed wager identity before Week/game
-  // reconciliation. Ordering and game matching are separate jobs: a truncated matchup can
-  // still be excellent evidence that two screenshots touch.
-  const rawNorm=c=>({
-    sel:normalizeImportTeamText(c?.selection||c?.matchedSelection||''),
-    type:String(c?.betType||'').toLowerCase(),
-    line:Number.isFinite(Number(c?.line))?Number(c.line):null,
-    odds:Number.isFinite(Number(c?.odds))?Number(c.odds):null
-  });
-  const rawOverlapScore=(a,b)=>{
-    const x=rawNorm(a),y=rawNorm(b);let score=0;
-    if(x.sel&&y.sel&&x.sel===y.sel)score+=10;
-    if(x.type&&y.type&&x.type===y.type)score+=4;
-    if(x.line!=null&&y.line!=null&&x.line===y.line)score+=2;
-    if(x.odds!=null&&y.odds!=null&&x.odds===y.odds)score+=2;
-    return score;
-  };
-  const rawSameLeg=(a,b)=>{
-    const x=rawNorm(a),y=rawNorm(b);
-    if(!x.sel||x.sel!==y.sel)return false;
-    if(x.type&&y.type&&x.type!==y.type)return false;
-    // Selection + market is enough at a screenshot boundary. Price is supporting evidence;
-    // OCR can drop it on one copy of the repeated leg.
-    return rawOverlapScore(a,b)>=10;
-  };
-  const rawPerImage=items.map((item,sourceIndex)=>(item.candidates||[]).map(c=>({...c,sourceScreenshotIndex:sourceIndex})));
-  const findRawBoundaryOverlap=(left,right)=>{
-    const max=Math.min(5,left.length,right.length);
-    for(let n=max;n>=1;n--){
-      let ok=true,score=0;
-      for(let j=0;j<n;j++){
-        const a=left[left.length-n+j],b=right[j];
-        if(!rawSameLeg(a,b)){ok=false;break;}
-        score+=20+rawOverlapScore(a,b);
-      }
-      if(ok)return {leftStart:left.length-n,rightStart:0,count:n,score};
-    }
-    let best=null;
-    const l0=Math.max(0,left.length-5),rMax=Math.min(5,right.length);
-    for(let li=l0;li<left.length;li++)for(let ri=0;ri<rMax;ri++){
-      if(!rawSameLeg(left[li],right[ri]))continue;
-      const score=rawOverlapScore(left[li],right[ri])+(li-l0)+(rMax-ri);
-      if(!best||score>best.score)best={leftStart:li,rightStart:ri,count:1,score};
-    }
-    return best;
-  };
-  const uploadedOrder=rawPerImage.map((_,i)=>i);
-  const uploadedHits=uploadedOrder.slice(1).map((to,i)=>findRawBoundaryOverlap(rawPerImage[uploadedOrder[i]],rawPerImage[to]));
-  const uploadedOrderValid=uploadedHits.every(Boolean);
-  const findScreenshotOrder=()=>{
-    if(rawPerImage.length<=1)return {order:[0],score:0,mode:'single'};
-    const attempts=[];
-    for(let start=0;start<rawPerImage.length;start++){
-      const order=[start],unused=new Set(rawPerImage.map((_,i)=>i).filter(i=>i!==start));
-      let score=0,valid=true;
-      while(unused.size){
-        const from=order[order.length-1];
-        const options=[...unused].map(to=>({to,hit:findRawBoundaryOverlap(rawPerImage[from],rawPerImage[to])})).filter(x=>x.hit).sort((a,b)=>b.hit.score-a.hit.score);
-        if(!options.length){valid=false;break;}
-        if(options.length>1&&options[0].hit.score===options[1].hit.score){valid=false;break;}
-        const best=options[0];order.push(best.to);unused.delete(best.to);score+=best.hit.score;
-      }
-      if(valid)attempts.push({order,score,mode:'raw-auto'});
-    }
-    attempts.sort((a,b)=>b.score-a.score);
-    if(attempts.length&&!(attempts.length>1&&attempts[0].score===attempts[1].score&&attempts[0].order.join(',')!==attempts[1].order.join(',')))return attempts[0];
-    // Never make a correctly uploaded batch worse just because automatic ordering is ambiguous.
-    if(uploadedOrderValid)return {order:uploadedOrder,score:uploadedHits.reduce((n,h)=>n+(h?.score||0),0),mode:'upload-fallback'};
-    return null;
-  };
-  const ordered=findScreenshotOrder();
-  if(!ordered){
-    return {error:'Could not confidently determine screenshot order from the repeated wager legs. Keep the screenshots in ticket order or include at least one repeated leg between each pair.',expectedLegs,isTeaser};
-  }
-  const screenshotOrder=ordered.order;
-  stitchDiagnostics.order={
-    uploaded:uploadedOrder,
-    resolved:screenshotOrder,
-    autoReordered:screenshotOrder.some((x,i)=>x!==i),
-    score:ordered.score,
-    mode:ordered.mode
-  };
-
-  // The raw overlaps establish the chain. Once ordered, merge only reconciled TrackPicks
-  // candidates into the final wager; do not require the repeated boundary leg itself to
-  // survive reconciliation on both screenshots.
-  let stitched=perImage[screenshotOrder[0]]?[...perImage[screenshotOrder[0]]]:[];
-  let overlapCount=0;
-  for(let oi=1;oi<screenshotOrder.length;oi++){
-    const prevSource=screenshotOrder[oi-1],nextSource=screenshotOrder[oi];
-    const rawHit=findRawBoundaryOverlap(rawPerImage[prevSource],rawPerImage[nextSource]);
-    if(!rawHit){
-      return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
-    }
-    overlapCount++;
-    const leftRaw=rawPerImage[prevSource][rawHit.leftStart+rawHit.count-1];
-    const rightRaw=rawPerImage[nextSource][rawHit.rightStart+rawHit.count-1];
-    stitchDiagnostics.connections.push({
-      fromScreenshot:prevSource+1,toScreenshot:nextSource+1,count:rawHit.count,score:rawHit.score,
-      leftLabel:importCandidateLabel(leftRaw),rightLabel:importCandidateLabel(rightRaw),decision:'RAW OVERLAP → MERGE CHAIN'
-    });
-    for(const c of perImage[nextSource]){
-      const duplicateIndex=stitched.findIndex(x=>isSameLeg(x,c));
-      if(duplicateIndex>=0)stitched[duplicateIndex]=mergeLeg(stitched[duplicateIndex],c);
-      else stitched.push(c);
-    }
-  }
-  // Final de-dupe uses reconciled game/selection/market identity instead of raw OCR fingerprints.
-  const legs=[];
-  for(const c of stitched){
-    const idx=legs.findIndex(x=>isSameLeg(x,c));
-    if(idx>=0)legs[idx]=mergeLeg(legs[idx],c); else legs.push(c);
-  }
-  if(!legs.length)return null;
-  stitchDiagnostics.finalLegs=legs.map((c,i)=>({index:i+1,label:importCandidateLabel(c),gameId:c.matchedGameId||'',matchStatus:c.matchStatus||''}));
-  stitchDiagnostics.finalCount=legs.length;
-  stitchDiagnostics.summary=`${items.reduce((n,item)=>n+(item.candidates||[]).length,0)} raw candidates → ${perImage.reduce((n,row)=>n+row.length,0)} stitch-eligible → ${legs.length} unique legs`;
-  return {expectedLegs,isTeaser,teaserPoints,odds:Number.isFinite(odds)?odds:null,stakeUsd,totalPayoutUsd:Number.isFinite(totalPayoutUsd)?totalPayoutUsd:null,units,legs,overlapCount,screenshotCount:perImage.length,stitchDiagnostics,
-    complete:legs.length===expectedLegs};
-}
-function screenshotCandidateToParlayLeg(c){
-  const g=gameById(c.matchedGameId); if(!g)return null;
-  const selection=c.matchedSelection||c.selection;
-  const sourceLine=c.betType==='Moneyline'?null:Number(c.line);
-  return {id:crypto.randomUUID(),gameId:g.id,betType:c.betType,selection,sourceLine:Number.isFinite(sourceLine)?sourceLine:null,odds:Number.isFinite(Number(c.odds))?Number(c.odds):-110,result:'Pending'};
-}
-function loadStitchedScreenshotParlay(){
-  const f=state.screenshotImportFlow;if(!f||f.saving||!f.multiLeg)return;
-  const t=f.multiLeg;
-    if(!Number.isFinite(Number(t.odds))){alert('TrackPicks could not read the ticket payout odds. Keep this batch and retake the screenshot with the parlay header visible.');return;}
-  const legs=t.legs.map(screenshotCandidateToParlayLeg).filter(Boolean);
-  if(!legs.length){alert('No matched legs remain to add to the Slip.');return;}
-  resetParlayDraft();
-  state.parlayDraft.legs=legs;
-  state.parlayDraft.who=state.displayName||'';
-  state.parlayDraft.units=Number.isFinite(Number(t.units))&&Number(t.units)>0?Number(t.units):1;
-  state.parlayDraft.odds=String(t.odds>0?`+${t.odds}`:t.odds);
-  state.parlayDraft.isTeaser=!!t.isTeaser;
-  state.parlayDraft.teaserPoints=t.isTeaser?(Number(t.teaserPoints)||6):6;
-  // 2.9.7: confirmation completes the batch. Clear its source screenshots so the
-  // next import always starts from an empty, unambiguous batch.
-  state.screenshotImportFlow=null;
-  state.screenshotImportFiles=[];
-  state.screenshotImportWeek=null;
-  state.screenshotImportMessage='';
-  state.screenshotImportProcessing=false;
-  state.screenshotImportReadyToReview=false;
-  state.showScreenshotImporter=false; state.view='slip'; state.slipTab='parlays'; render();
-}
 function existingSlipDuplicate(c){
   if(c.matchStatus!=='matched'||!c.matchedGameId)return null;
   const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
@@ -3621,17 +3245,12 @@ async function saveScreenshotCandidate(c,existing=null){
   // A screenshot duplicate updates sportsbook-derived values on the existing TrackPicks pick.
   // Preserve TrackPicks-owned metadata such as Who, result/status, import linkage, and any
   // future wager-level metadata already present on the local record.
-  // Update Pick is non-destructive: missing screenshot values mean "no new information".
-  // Never replace a good saved value with null/blank/NaN (or 0 from Number(null)).
-  const hasCandidateLine=c.line!==null && c.line!==undefined && String(c.line).trim()!=='' && Number.isFinite(Number(c.line));
-  const hasCandidateOdds=c.odds!==null && c.odds!==undefined && String(c.odds).trim()!=='' && Number.isFinite(Number(c.odds)) && Number(c.odds)!==0;
-  const hasCandidateUnits=c.units!==null && c.units!==undefined && String(c.units).trim()!=='' && Number.isFinite(Number(c.units)) && Number(c.units)>0;
   const obj=existing
     ? {...existing,
-       line:hasCandidateLine?imported.line:existing.line,
-       payoutOdds:hasCandidateOdds?imported.payoutOdds:existing.payoutOdds,
-       units:hasCandidateUnits?imported.units:existing.units,
-       pick:hasCandidateLine?imported.pick:existing.pick,
+       line:imported.line,
+       payoutOdds:imported.payoutOdds,
+       units:imported.units,
+       pick:imported.pick,
        marketSpread:existing.marketSpread ?? imported.marketSpread,
        marketTotal:existing.marketTotal ?? imported.marketTotal,
        marketMoneyline:existing.marketMoneyline ?? imported.marketMoneyline}
@@ -3643,12 +3262,6 @@ async function saveScreenshotCandidate(c,existing=null){
 }
 function startScreenshotSlipWorkflow(){
   try{
-    const multiLeg=parseScreenshotMultiLegTicket();
-    if(multiLeg?.error){state.screenshotImportMessage=multiLeg.error;alert(multiLeg.error);state.showScreenshotImporter=true;render();return;}
-    if(multiLeg){
-      state.screenshotImportFlow={multiLeg,stage:'multi',index:0,saving:false};
-      state.showScreenshotImporter=false;render();return;
-    }
     const reconciled=reconcileScreenshotImportBatch();
     const wrong=reconciled.filter(c=>c.matchStatus==='wrong-week'||c.matchStatus==='future-week');
     const usable=reconciled.filter(c=>c.matchStatus==='matched');
@@ -3678,11 +3291,6 @@ function startScreenshotSlipWorkflow(){
 }
 function advanceScreenshotFlow(){
   const f=state.screenshotImportFlow;if(!f)return;
-  // Every stage transition starts unlocked. The previous stage may have set
-  // saving=true while its Supabase writes were in flight; carrying that flag
-  // into Review makes saveScreenshotReview() immediately return and leaves the
-  // button permanently showing "Saving…" even though the Ready wagers saved.
-  f.saving=false;
   if(f.stage==='ready')f.stage=f.duplicates.length?'duplicates':f.review.length?'review':'summary';
   else if(f.stage==='duplicates')f.stage=f.review.length?'review':'summary';
   else if(f.stage==='review')f.stage='summary';
@@ -3703,42 +3311,15 @@ async function saveScreenshotReview(){
   if(!Number.isFinite(odds)){alert('Enter valid Actual Payout Odds.');return;}if(!Number.isFinite(units)||units<=0){alert('Enter valid Units greater than 0.');return;}
   c.odds=odds;c.units=units;c.oddsNeedsReview=false;if(lineEl){const n=Number(lineEl.value);if(!Number.isFinite(n)){alert('Enter a valid Actual Line.');return;}c.line=n;}finalizeScreenshotCandidateReadiness(c);
   if(c.reviewState!=='Ready for Slip'){alert(`Still needs: ${(c.missingFields||[]).join(', ')}`);return;}
-  f.saving=true;render();
-  try{
-    await saveScreenshotCandidate(c);
-    // Commit workflow state before rendering again. This prevents a successful save
-    // from leaving the review sheet stranded in its disabled "Saving…" state.
-    f.index++;
-    f.saving=false;
-    if(f.index>=f.review.length){
-      f.stage='summary';
-      f.index=0;
-    }
-    render();
-  }catch(e){
-    f.saving=false;
-    alert(`Could not save imported bet: ${e.message||e}`);
-    render();
-  }
+  f.saving=true;render();try{await saveScreenshotCandidate(c);f.index++;f.saving=false;if(f.index>=f.review.length)advanceScreenshotFlow();else render();}catch(e){f.saving=false;alert(`Could not save imported bet: ${e.message||e}`);render();}
 }
 function importCandidateLabel(c){const sel=c.matchedSelection||c.selection||'Unknown pick';const line=c.betType==='Moneyline'?' ML':Number.isFinite(Number(c.line))?` ${signed(c.line)}`:'';return `${sel}${line}`;}
 function renderScreenshotImportFlow(){
   const f=state.screenshotImportFlow;if(!f)return'';
   const shell=(title,body,actions)=>`<div class="overlay" style="padding-bottom:calc(82px + env(safe-area-inset-bottom, 0px));align-items:flex-end"><section class="sheet" style="max-height:calc(88vh - 82px);overflow:auto;margin-bottom:0"><div class="close-row"><div><div class="eyebrow">Version 2 Import</div><h2 style="margin:4px 0">${escapeAttr(title)}</h2></div><button class="icon-btn" data-close-import-flow aria-label="Cancel import review">✕</button></div>${body}<div style="display:grid;gap:10px;margin-top:16px">${actions}</div></section></div>`;
-  if(f.stage==='multi'){
-    const t=f.multiLeg; const kind=t.isTeaser?'teaser':'parlay';
-    const status=t.complete?`All ${t.expectedLegs} unique legs found`:`Found ${t.legs.length} of ${t.expectedLegs} unique legs`;
-    const d=t.stitchDiagnostics;
-    const orderDiag=d?.order?`<div class="parsed-bet-card"><strong>Screenshot order</strong><div style="margin-top:6px">${d.order.autoReordered?`Auto-reordered: ${d.order.resolved.map(i=>`Screenshot ${i+1}`).join(' → ')}`:`Upload order already correct: ${d.order.resolved.map(i=>`Screenshot ${i+1}`).join(' → ')}`}</div></div>`:'';
-    const metadataDiag=d?.metadata?`<div class="parsed-bet-card"><strong>Bet metadata</strong><div style="margin-top:6px">Payout odds: ${d.metadata.odds==null?'Needs header':escapeAttr(signed(d.metadata.odds))}${d.metadata.oddsSource!=null?` · Screenshot ${d.metadata.oddsSource+1} header`:''}<br>Wager: ${d.metadata.stakeUsd==null?'Needs review':escapeAttr(formatUsd(d.metadata.stakeUsd))}${d.metadata.stakeSource!=null?` · Screenshot ${d.metadata.stakeSource+1} footer`:''}<br>Total payout: ${d.metadata.totalPayoutUsd==null?'Not detected':escapeAttr(formatUsd(d.metadata.totalPayoutUsd))}${d.metadata.payoutSource!=null?` · Screenshot ${d.metadata.payoutSource+1} footer`:''}</div></div>`:'';
-    const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${orderDiag}${metadataDiag}${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br>${r.selectionTrace?`<span><strong>Selection lifecycle:</strong> raw ${escapeAttr(r.selectionTrace.rawSelection||r.rawSelection||'—')} → match entry ${escapeAttr(r.selectionTrace.matchEntry||'—')} → normalized ${escapeAttr(r.selectionTrace.afterNormalizeForMatch||r.selectionTrace.afterNormalize||'—')} → pre-game ${escapeAttr(r.selectionTrace.beforeMatchedGameCanonical||'—')} → canonical result ${escapeAttr(r.selectionTrace.canonicalResult||'—')} → final ${escapeAttr(r.selectionTrace.afterMatchedGameCanonical||r.currentSelection||'—')} · matchedSelection ${escapeAttr(r.selectionTrace.matchedSelection||r.matchedSelection||'—')}</span><br>`:''}<span>Decision: ${escapeAttr(r.decision)}</span>${r.reconciliationDiagnostic?`<details style="margin-top:6px"><summary>Reconciliation trace</summary><div style="margin-top:6px;font-size:12px;line-height:1.45"><strong>Parsed matchup:</strong> ${escapeAttr(r.reconciliationDiagnostic.parsedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.parsedHome||'—')}<br><strong>Normalized:</strong> ${escapeAttr(r.reconciliationDiagnostic.normalizedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.normalizedHome||'—')}<br><strong>Selection:</strong> ${escapeAttr(r.reconciliationDiagnostic.selection||'—')} → ${escapeAttr(r.reconciliationDiagnostic.normalizedSelection||'—')}<br><strong>Reason:</strong> ${escapeAttr(r.reconciliationDiagnostic.reason||'—')}<br><strong>Top Week ${escapeAttr(String(r.reconciliationDiagnostic.activeWeek))} comparisons:</strong>${(r.reconciliationDiagnostic.tested||[]).map((t,ti)=>`<br>${ti+1}. ${escapeAttr(t.away)} @ ${escapeAttr(t.home)} · pair ${t.pairAway}/${t.pairHome} · selection ${t.selAway}/${t.selHome} · direct ${t.directScore} · normal ${t.normalScore}`).join('')}</div></details>`:''}</div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
-    const topAction=`<button class="primary tp-big-action" data-load-stitched-parlay ${!t.legs.length?'disabled':''}>Add to Slip</button>`;
-    const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} screenshot connection${t.overlapCount===1?'':'s'} verified.`:'Single screenshot ticket.'}</div><div class="parsed-bet-card"><strong>1 ${escapeAttr(kind)} found · ${t.legs.length} leg${t.legs.length===1?'':'s'}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>${topAction}<div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card tp-review-leg"><div><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div><button type="button" class="tp-leg-delete" data-delete-import-leg="${i}" aria-label="Remove leg">×</button></div>`).join('')}</div>${diag}`;
-    return shell('Review Picks',body,`<button class="secondary" data-cancel-import-flow>Back to Screenshots</button>`);
-  }
   if(f.stage==='ready'){
-    const body=`<p><strong>${f.ready.length} pick${f.ready.length===1?'':'s'} found</strong></p><button class="primary tp-big-action" data-confirm-ready-import ${f.saving?'disabled':''}>${f.saving?'Adding…':'Add All to Slip'}</button><div class="parsed-bets-list">${f.ready.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div><div>${escapeAttr(signed(c.odds))} · ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u</div></div>`).join('')}</div>`;
-    return shell('Review Picks',body,`<button class="secondary" data-cancel-import-flow>Cancel</button>`);
+    const body=`<p>Confirm these ${f.ready.length} complete wager${f.ready.length===1?'':'s'} together before TrackPicks adds them to your Slip.</p><div class="parsed-bets-list">${f.ready.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div><div>${escapeAttr(signed(c.odds))} · ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u</div></div>`).join('')}</div>`;
+    return shell('Ready for Slip',body,`<button class="primary" data-confirm-ready-import ${f.saving?'disabled':''}>${f.saving?'Adding…':`Confirm All & Add ${f.ready.length} to Slip`}</button><button class="secondary" data-cancel-import-flow>Cancel</button>`);
   }
   if(f.stage==='duplicates'){
     const r=f.duplicates[f.index],c=r.candidate,w=r.existing;const body=`<div class="parsed-bet-warning"><strong>Existing pick ${f.index+1} of ${f.duplicates.length}</strong><br>TrackPicks found this pick in your Slip. Screenshot values can update the sportsbook fields without replacing your TrackPicks pick.</div><div class="parsed-bets-list"><div class="parsed-bet-card"><strong>Existing Slip</strong><div>${escapeAttr(w.pick)}</div><div>Actual line ${escapeAttr(String(w.line))} · Payout ${escapeAttr(signed(w.payoutOdds))} · ${escapeAttr(String(w.units))}u</div></div><div class="parsed-bet-card"><strong>Screenshot</strong><div>${escapeAttr(importCandidateLabel(c))}</div><div>Actual line ${escapeAttr(String(c.line??'—'))} · Payout ${escapeAttr(c.odds==null?'—':signed(c.odds))} · ${escapeAttr(c.units==null?'—':String(c.units))}u</div></div></div>`;
@@ -3754,30 +3335,72 @@ function renderScreenshotImportFlow(){
 }
 
 function renderScreenshotImporter(){
-  const files=state.screenshotImportFiles||[];
-  const importWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
+  const files=state.screenshotImportFiles;
   const unitSet=Number.isFinite(Number(state.standardUnitSize))&&Number(state.standardUnitSize)>0;
-  const processed=files.filter(x=>(x.candidates||[]).length||x.status==='Needs review'||x.status==='Parse error').length;
-  const total=files.length;
-  const overall=total?Math.round(files.reduce((n,x)=>n+(Number(x.progress)||((x.candidates||[]).length?100:0)),0)/total):0;
-  const shell=body=>`<div class="screenshot-import-overlay tp210-import"><section class="screenshot-import-page"><div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Picks</div><span class="settings-page-top-spacer"></span></div><div class="screenshot-import-scroll tp210-import-scroll">${body}</div></section></div>`;
-  if(state.screenshotImportProcessing){
-    return shell(`<div class="tp-process-center"><div class="tp-process-kicker">Week ${importWeek}</div><h2>Processing your screenshots</h2><div class="tp-process-count">${processed} of ${total}</div><div class="tp-progress"><span style="width:${overall}%"></span></div><p>Reading bets and matching games…</p></div>`);
-  }
-  if(state.screenshotImportReadyToReview){
-    const found=files.reduce((n,x)=>n+(x.candidates||[]).filter(c=>c.matchStatus==='matched').length,0);
-    let foundLabel=`${found} pick${found===1?'':'s'} found`;
-    try{
-      const multi=parseScreenshotMultiLegTicket();
-      if(multi&&!multi.error)foundLabel=`1 ${multi.isTeaser?'teaser':'parlay'} found: ${multi.legs.length} legs`;
-    }catch(_e){}
-    return shell(`<div class="tp-process-center"><div class="tp-success-mark">✓</div><h2>${total} of ${total} processed</h2><p>${escapeAttr(foundLabel)}</p><button type="button" class="primary tp-big-action" data-review-screenshot-results>Review Picks</button><details class="tp-diag-peek"><summary>Batch details</summary><div>${files.map((x,i)=>`Screenshot ${i+1}: ${escapeAttr(x.status||'Processed')}`).join('<br>')}</div></details></div>`);
-  }
-  if(!files.length){
-    return shell(`<div class="tp-import-intro"><div class="tp-process-kicker">Week ${importWeek}</div><h2>Import sportsbook screenshots</h2><p>TrackPicks will read your screenshots, match the games, and build the wagers for review before anything is added to your Slip.</p><div class="tp-import-rules"><strong>Before you start</strong><p><b>Singles:</b> Upload all of your single bets together in one batch.</p><p><b>Parlays & teasers:</b> Upload each multi-leg bet as its own separate batch.</p><p><b>Long parlays:</b> Include at least one repeated leg between consecutive screenshots so TrackPicks can stitch them together.</p><p><b>Current week only:</b> Only upload bets for the Slip week you are working on.</p></div>${!unitSet?`<div class="screenshot-import-warning"><strong>Standard unit size is not set.</strong><span>Set it first so TrackPicks can calculate units from wager amounts.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}<button type="button" class="primary tp-big-action" data-add-screenshots>Select Screenshots</button><input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>`);
-  }
-  return shell(`<div class="tp-confirm-batch"><div class="tp-process-kicker">Week ${importWeek}</div><h2>${total} screenshot${total===1?'':'s'} selected</h2><p>Ready to process these images?</p><button type="button" class="primary tp-big-action" data-process-screenshots>Process ${total} Screenshot${total===1?'':'s'}</button><button type="button" class="secondary full-width" data-add-screenshots>Change Selection / Add More</button>${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}<div class="tp-thumb-grid">${files.map((x,i)=>`<div class="tp-thumb"><img src="${escapeAttr(x.preview)}" alt="Screenshot ${i+1}"><button type="button" data-remove-screenshot="${escapeAttr(x.id)}" aria-label="Remove screenshot">×</button><span>${i+1}</span></div>`).join('')}</div><input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>`);
+  const totalCandidates=files.reduce((sum,item)=>sum+(item.candidates?.length||0),0);
+  const importWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
+  const cards=files.length?files.map((item,index)=>{
+    const candidates=(item.candidates||[]).map((c,cIndex)=>{
+      const stake=c.stakeUsd==null?'Stake not detected':`${formatUsd(c.stakeUsd)}${c.units!=null?` → ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u`:''}`;
+      const linePart=c.line==null?'':` ${signed(c.line)}`;
+      const oddsPart=c.odds==null?'':` · ${signed(c.odds)}`;
+      const meta=[c.sportsbook,c.betType,c.status].filter(Boolean).join(' · ');
+      const matchClass=(c.matchStatus==='wrong-week'||c.matchStatus==='future-week')?'wrong-week':c.reviewState==='Ready for Slip'?'matched':'review';
+      const displaySelection=((c.matchStatus==='matched'||c.matchStatus==='wrong-week')&&c.matchedSelection)?c.matchedSelection:c.selection;
+      const matchLine=c.matchStatus==='matched'?`<div class="parsed-bet-match"><strong>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</strong><span>Week ${importWeek} game matched</span></div>`:c.matchStatus==='wrong-week'?`<div class="parsed-bet-warning"><strong>Wrong week.</strong> ${c.matchedAway&&c.matchedHome?`${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)} is a Week ${Number(c.detectedWeek)} game. `:`This appears to be a Week ${Number(c.detectedWeek)} game. `}This batch can only accept Week ${importWeek} games.</div>`:c.matchStatus==='future-week'?`<div class="parsed-bet-warning"><strong>Future wager.</strong> This wager was placed ${escapeAttr(c.placedAt||'after this week')} and cannot be added to Week ${importWeek}. Choose that date's week or a later week and verify the match.</div>`:'';
+      return `<div class="parsed-bet-card">
+        <div class="parsed-bet-head"><span>Bet ${cIndex+1}</span><span class="import-status-chip ${matchClass}">${escapeAttr(c.reviewState||'Needs review')}</span></div>
+        <strong class="parsed-bet-pick">${escapeAttr(displaySelection)}${escapeAttr(linePart)}</strong>
+        <div class="parsed-bet-meta">${escapeAttr(meta)}${escapeAttr(oddsPart)}</div>
+        <div class="parsed-bet-stake">${escapeAttr(stake)}${c.possibleWinningsUsd!=null?`<span> · Possible winnings ${escapeAttr(formatUsd(c.possibleWinningsUsd))}</span>`:''}</div>
+        ${c.layoutType==='compact'?'<div class="parsed-bet-event">Compact row detected</div>':''}
+        ${matchLine}
+        ${c.eventText?`<div class="parsed-bet-event">${escapeAttr(c.eventText)}</div>`:''}
+        ${c.stakeConfidence==='medium'?'<div class="parsed-bet-warning">Check wager amount — inferred from screenshot layout.</div>':''}${(c.missingFields||[]).length?`<div class="parsed-bet-warning"><strong>Needs review:</strong> ${escapeAttr(c.missingFields.join(' · '))}</div>`:''}
+        ${(c.repairNotes||[]).length?`<div class="parsed-bet-warning"><strong>OCR repair:</strong> ${escapeAttr(c.repairNotes.join(' · '))}</div>`:''}
+      </div>`;
+    }).join('');
+    const status=item.status==='Parsing'?`Parsing ${item.progress||0}%`:(item.status||'Queued');
+    return `<article class="screenshot-review-card ${item.candidates?.length?'has-results':''}">
+      <div class="screenshot-thumb-wrap">${item.preview?`<img src="${escapeAttr(item.preview)}" class="screenshot-thumb" alt="Screenshot ${index+1}">`:'<div class="screenshot-thumb-error">Image unavailable</div>'}</div>
+      <div class="screenshot-review-copy"><div class="screenshot-review-top"><strong>Screenshot ${index+1}</strong><span class="import-status-chip ${item.status==='Parsing'?'working':''}">${escapeAttr(status)}</span></div><div class="screenshot-file-name">${escapeAttr(item.fileName)}</div>${item.status==='Parsing'?`<div class="import-progress"><span style="width:${Number(item.progress)||0}%"></span></div>`:''}<div class="screenshot-review-note">${item.candidates?.length?'Parsed locally. Review the detected wager details below.':'Ready for wager parsing. No bet will be added to your Slip until you approve it.'}</div>${item.error?`<div class="parsed-bet-warning">${escapeAttr(item.error)}</div>`:''}</div>
+      ${item.parserDiagnostic?`<details class="parser-debug-panel" open><summary>Parser diagnostics · ${escapeAttr(item.parserDiagnostic.reason)}</summary><div class="parser-debug-grid"><span>Build</span><strong>${escapeAttr(item.parserDiagnostic.build)}</strong><span>Source</span><strong>${escapeAttr(item.parserDiagnostic.source)}</strong><span>Prepared</span><strong>${escapeAttr(item.parserDiagnostic.prepared)}</strong><span>Scale / ratio</span><strong>${escapeAttr(String(item.parserDiagnostic.scale))}× / ${escapeAttr(String(item.parserDiagnostic.ratio))}</strong><span>Layout route</span><strong>${escapeAttr(item.parserDiagnostic.layoutHint)}</strong><span>Sportsbook</span><strong>${escapeAttr(item.parserDiagnostic.detectedSportsbook)}</strong><span>OCR chars</span><strong>${escapeAttr(String(item.parserDiagnostic.normalizedCharCount))}</strong><span>Timestamps</span><strong>${escapeAttr(String(item.parserDiagnostic.timestampCount))}</strong><span>Odds tokens</span><strong>${escapeAttr((item.parserDiagnostic.americanOdds||[]).join(', ')||'none')}</strong><span>Money tokens</span><strong>${escapeAttr((item.parserDiagnostic.moneyTokens||[]).join(', ')||'none')}</strong><span>Compact candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.compactCandidateCount))}</strong><span>Wager anchors</span><strong>${escapeAttr(String(item.parserDiagnostic.wagerAnchorCount??item.parserDiagnostic.finalCandidateCount))}</strong><span>Spread candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.spreadCandidateCount??0))}</strong><span>Moneyline candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.moneylineCandidateCount??0))}</strong><span>Total candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.totalCandidateCount??0))}</strong><span>Final candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.finalCandidateCount))}</strong></div>${(item.parserDiagnostic.compactCandidates||[]).map((c,i)=>`<div class="parser-debug-candidate"><div class="parser-debug-label">Compact candidate ${i+1}</div><pre class="parser-debug-text">Raw selection: ${escapeAttr(c.rawSelection||'(empty)')}\nNormalized selection: ${escapeAttr(c.selection||'(empty)')}\nType: ${escapeAttr(c.betType||'')}\nLine: ${escapeAttr(String(c.line??'none'))}\nOdds: ${escapeAttr(String(c.odds??'none'))}\nMoney: ${escapeAttr(String(c.stakeUsd??'none'))} / ${escapeAttr(String(c.possibleWinningsUsd??'none'))}</pre></div>`).join('')}${item.parserDiagnostic.compactError?`<div class="parsed-bet-warning">Compact parser error: ${escapeAttr(item.parserDiagnostic.compactError)}</div>`:''}${(item.parserDiagnostic.dkSettledDiagnostics||[]).map(d=>`<div class="parser-debug-candidate"><div class="parser-debug-label">DK settled trace · Bet ${d.index}</div><pre class="parser-debug-text">Selection: ${escapeAttr(d.trace.selection||'(empty)')}
+Event before/after recovery: ${escapeAttr(d.trace.eventText||'(empty)')}
+Final detected: ${d.trace.contextHasFinal?'YES':'NO'}
+Scoreboard boundary: ${escapeAttr(d.trace.boundary||'none')}
+Teams recognized: ${escapeAttr((d.trace.teamClues||[]).join(' | ')||'none')}
+Scoreboard row resolution:
+${escapeAttr((d.trace.scoreboardRows||[]).join('\n')||'none')}
+Recovered selection: ${escapeAttr(d.trace.recoveredSelection||'none')}
+Match status: ${escapeAttr(d.trace.matchStatus||'none')}
+Matched game: ${escapeAttr(d.trace.matchedGame||'none')}
+Detected/matched week: ${escapeAttr(String(d.trace.detectedWeek||'none'))}
+
+TWO-TEAM PAIR MATCHES
+${escapeAttr((d.trace.pairMatches||[]).join('\n')||'none')}
+
+FINAL → SHARE BLOCK
+${escapeAttr(d.trace.scoreboard||'(none)')}
+
+TOP TRACKPICKS GAME SCORES
+${escapeAttr((d.trace.topGames||[]).join('\n')||'none')}</pre></div>`).join('')}<div class="parser-debug-label">OCR text reaching parser</div><pre class="parser-debug-text">${escapeAttr(item.parserDiagnostic.ocrText||'(empty)')}</pre></details>`:''}
+      ${candidates?`<div class="parsed-bets-list">${candidates}</div>`:''}
+    </article>`;
+  }).join(''):`<div class="screenshot-import-empty"><strong>No screenshots selected yet.</strong><span>Select one or many sportsbook screenshots to start a review batch.</span></div>`;
+  return `<div class="screenshot-import-overlay"><section class="screenshot-import-page">
+    <div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Screenshots</div><span class="settings-page-top-spacer"></span></div>
+    <div class="screenshot-import-scroll">
+      <div class="screenshot-import-summary"><div><strong>Week ${importWeek} import · ${files.length} screenshot${files.length===1?'':'s'}</strong><span>${totalCandidates?`${totalCandidates} wager candidate${totalCandidates===1?'':'s'} detected · Week ${importWeek} only`:`Bulk review queue · Week ${importWeek} only`}</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
+      ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
+      ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
+      <div class="screenshot-import-actions">${files.length?`<button type="button" class="primary" data-process-screenshots ${state.screenshotImportProcessing?'disabled':''}>${state.screenshotImportProcessing?'Processing Screenshots…':(totalCandidates?'Process Remaining Screenshots':'Process Screenshots')}</button>`:''}<button type="button" class="${files.length?'secondary':'primary'}" data-add-screenshots ${state.screenshotImportProcessing?'disabled':''}>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch '+(state.screenshotImportProcessing?'disabled':'')+'>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
+      ${totalCandidates&&!state.screenshotImportProcessing?`<button type="button" class="primary full-width" data-review-screenshot-results>Review Import Results</button>`:''}
+      <div class="screenshot-import-stage-head"><div><span>Stage 5</span><strong>Reconcile + send to Slip</strong></div><p>TrackPicks automatically reconciles overlapping screenshots first, then groups complete bets, duplicates, review items, and wrong-week bets.</p></div>
+      <div class="screenshot-review-list">${cards}</div>
+    </div>
+  </section></div>`;
 }
+
 function renderSettingsSheet(){
   const adminApiSection = state.isAdmin ? `
     <div class="security-note">
@@ -3867,7 +3490,6 @@ function renderSettingsSheet(){
         <strong>Cloud sync is active.</strong> This app is permanently connected to the shared TrackPicks database. Games are shared with signed-in users; picks are private to each account.
       </div>
       <button class="secondary full-width" data-sync-now>Sync Now</button>
-      <div class="report-note" style="text-align:center;margin-top:14px">TrackPicks · Version ${escapeAttr(BUILD_VERSION)}</div>
       <button class="danger-outline" data-signout>Log Out</button>
       </div>
     </section>
@@ -3973,28 +3595,22 @@ function bind(){
   document.querySelectorAll('[data-week]').forEach(el=>el.onclick=()=>{state.selectedWeek=Number(el.dataset.week);state.view='market';state.slateDivision='FBS';state.slateConference='All';state.importMessage='';render();});
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{state.view=el.dataset.nav;render();});
   document.querySelectorAll('[data-settings]').forEach(el=>el.onclick=()=>{state.showSettings=true;render();});
-  document.querySelectorAll('[data-launch-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=true;state.screenshotImportReadyToReview=false;render();});
   document.querySelectorAll('[data-close-settings]').forEach(el=>el.onclick=()=>{state.showSettings=false;render();});
   document.querySelectorAll('[data-save-unit-size]').forEach(el=>el.onclick=async()=>{const input=document.getElementById('standardUnitSizeInput');const result=await saveStandardUnitSize(input?.value);if(!result.ok){alert(result.message);return;}el.textContent='✓ Saved';setTimeout(()=>{if(document.body.contains(el))el.textContent='Save Standard Unit Size';},1200);});
   document.querySelectorAll('[data-open-screenshot-import]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-file-input]')?.click());
   document.querySelectorAll('[data-screenshot-file-input]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-close-screenshot-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;render();});
   document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
-  document.querySelectorAll('[data-import-help]').forEach(el=>el.onclick=()=>{state.screenshotImportHelp=true;render();});
-  document.querySelectorAll('[data-close-import-help]').forEach(el=>el.onclick=()=>{state.screenshotImportHelp=false;render();});
   document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-process-screenshots]').forEach(el=>el.onclick=processScreenshotBatch);
-  document.querySelectorAll('[data-remove-screenshot]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=state.screenshotImportFiles.filter(x=>x.id!==el.dataset.removeScreenshot);if(!state.screenshotImportFiles.length)state.screenshotImportWeek=null;state.screenshotImportReadyToReview=false;render();});
-  document.querySelectorAll('[data-delete-import-leg]').forEach(el=>el.onclick=()=>{const f=state.screenshotImportFlow;if(!f?.multiLeg||f.saving)return;const i=Number(el.dataset.deleteImportLeg);if(Number.isInteger(i)&&i>=0&&i<f.multiLeg.legs.length){f.multiLeg.legs.splice(i,1);f.multiLeg.complete=f.multiLeg.legs.length===f.multiLeg.expectedLegs;render();}});
   document.querySelectorAll('[data-review-screenshot-results]').forEach(el=>el.onclick=startScreenshotSlipWorkflow);
-  document.querySelectorAll('[data-load-stitched-parlay]').forEach(el=>el.onclick=loadStitchedScreenshotParlay);
   document.querySelectorAll('[data-confirm-ready-import]').forEach(el=>el.onclick=confirmReadyScreenshotBets);
   document.querySelectorAll('[data-use-import-duplicate]').forEach(el=>el.onclick=()=>resolveScreenshotDuplicate(true));
   document.querySelectorAll('[data-keep-existing-duplicate]').forEach(el=>el.onclick=()=>resolveScreenshotDuplicate(false));
   document.querySelectorAll('[data-save-import-review]').forEach(el=>el.onclick=saveScreenshotReview);
   document.querySelectorAll('[data-close-import-flow],[data-cancel-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=true;render();});
-  document.querySelectorAll('[data-finish-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=false;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportProcessing=false;state.screenshotImportReadyToReview=false;state.view='slip';render();});
-  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportFlow=null;state.screenshotImportReadyToReview=false;render();});
+  document.querySelectorAll('[data-finish-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=false;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportProcessing=false;state.view='slip';render();});
+  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportFlow=null;render();});
   document.querySelectorAll('[data-import-open-settings]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;state.showSettings=true;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
   document.querySelectorAll('[data-import-history]').forEach(el=>el.onclick=()=>document.querySelector('[data-history-file]')?.click());
