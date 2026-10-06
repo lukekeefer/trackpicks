@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.7';
+const BUILD_VERSION = '2.8';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return 'Version 2'; }
@@ -3171,12 +3171,17 @@ async function saveScreenshotCandidate(c,existing=null){
   // A screenshot duplicate updates sportsbook-derived values on the existing TrackPicks pick.
   // Preserve TrackPicks-owned metadata such as Who, result/status, import linkage, and any
   // future wager-level metadata already present on the local record.
+  // Update Pick is non-destructive: missing screenshot values mean "no new information".
+  // Never replace a good saved value with null/blank/NaN (or 0 from Number(null)).
+  const hasCandidateLine=c.line!==null && c.line!==undefined && String(c.line).trim()!=='' && Number.isFinite(Number(c.line));
+  const hasCandidateOdds=c.odds!==null && c.odds!==undefined && String(c.odds).trim()!=='' && Number.isFinite(Number(c.odds)) && Number(c.odds)!==0;
+  const hasCandidateUnits=c.units!==null && c.units!==undefined && String(c.units).trim()!=='' && Number.isFinite(Number(c.units)) && Number(c.units)>0;
   const obj=existing
     ? {...existing,
-       line:imported.line,
-       payoutOdds:imported.payoutOdds,
-       units:imported.units,
-       pick:imported.pick,
+       line:hasCandidateLine?imported.line:existing.line,
+       payoutOdds:hasCandidateOdds?imported.payoutOdds:existing.payoutOdds,
+       units:hasCandidateUnits?imported.units:existing.units,
+       pick:hasCandidateLine?imported.pick:existing.pick,
        marketSpread:existing.marketSpread ?? imported.marketSpread,
        marketTotal:existing.marketTotal ?? imported.marketTotal,
        marketMoneyline:existing.marketMoneyline ?? imported.marketMoneyline}
