@@ -1,7 +1,7 @@
-const BUILD_VERSION = '2.8';
+const BUILD_VERSION = '2.8.2';
 let deployedVersion = BUILD_VERSION;
 
-function versionStamp(){ return 'Version 2'; }
+function versionStamp(){ return `Version ${BUILD_VERSION}`; }
 
 function versionParts(v){
   return String(v||'').trim().split('.').map(x=>{
@@ -3242,7 +3242,23 @@ async function saveScreenshotReview(){
   if(!Number.isFinite(odds)){alert('Enter valid Actual Payout Odds.');return;}if(!Number.isFinite(units)||units<=0){alert('Enter valid Units greater than 0.');return;}
   c.odds=odds;c.units=units;c.oddsNeedsReview=false;if(lineEl){const n=Number(lineEl.value);if(!Number.isFinite(n)){alert('Enter a valid Actual Line.');return;}c.line=n;}finalizeScreenshotCandidateReadiness(c);
   if(c.reviewState!=='Ready for Slip'){alert(`Still needs: ${(c.missingFields||[]).join(', ')}`);return;}
-  f.saving=true;render();try{await saveScreenshotCandidate(c);f.index++;f.saving=false;if(f.index>=f.review.length)advanceScreenshotFlow();else render();}catch(e){f.saving=false;alert(`Could not save imported bet: ${e.message||e}`);render();}
+  f.saving=true;render();
+  try{
+    await saveScreenshotCandidate(c);
+    // Commit workflow state before rendering again. This prevents a successful save
+    // from leaving the review sheet stranded in its disabled "Saving…" state.
+    f.index++;
+    f.saving=false;
+    if(f.index>=f.review.length){
+      f.stage='summary';
+      f.index=0;
+    }
+    render();
+  }catch(e){
+    f.saving=false;
+    alert(`Could not save imported bet: ${e.message||e}`);
+    render();
+  }
 }
 function importCandidateLabel(c){const sel=c.matchedSelection||c.selection||'Unknown pick';const line=c.betType==='Moneyline'?' ML':Number.isFinite(Number(c.line))?` ${signed(c.line)}`:'';return `${sel}${line}`;}
 function renderScreenshotImportFlow(){
@@ -3421,6 +3437,7 @@ function renderSettingsSheet(){
         <strong>Cloud sync is active.</strong> This app is permanently connected to the shared TrackPicks database. Games are shared with signed-in users; picks are private to each account.
       </div>
       <button class="secondary full-width" data-sync-now>Sync Now</button>
+      <div class="report-note" style="text-align:center;margin-top:14px">TrackPicks · Version ${escapeAttr(BUILD_VERSION)}</div>
       <button class="danger-outline" data-signout>Log Out</button>
       </div>
     </section>
