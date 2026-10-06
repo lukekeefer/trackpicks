@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.8';
+const BUILD_VERSION = '2.9.9';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -2090,18 +2090,41 @@ function extractImportMatchupPair(text){
   return away&&home?{away,home}:null;
 }
 
+function importTruncatedTeamSideScore(text,teamName){
+  const raw=normalizeImportTeamText(text).replace(/\s+/g,' ').trim();
+  if(raw.length<4)return 0;
+  let best=0;
+  for(const form of importTeamForms(teamName)){
+    // Sportsbook rows often end in an OCR/UI ellipsis (Kans..., North Caro...).
+    // A four+ character leading fragment is safe only as matchup-side evidence;
+    // it is never used by itself to choose a wager selection.
+    if(form.startsWith(raw) && form.length>raw.length)best=Math.max(best,86);
+  }
+  return best;
+}
+
 function directImportMatchupForGame(candidate,game){
   const sources=[candidate?.eventText,candidate?.contextText].filter(Boolean);
   for(const source of sources){
     const pair=extractImportMatchupPair(source);
     if(!pair)continue;
-    const away=importTeamTextScore(pair.away,game.away);
-    const home=importTeamTextScore(pair.home,game.home);
+    const away=Math.max(importTeamTextScore(pair.away,game.away),importTruncatedTeamSideScore(pair.away,game.away));
+    const home=Math.max(importTeamTextScore(pair.home,game.home),importTruncatedTeamSideScore(pair.home,game.home));
+    // Always score selection from the raw sportsbook wording when available.
+    // This prevents a premature generic alias (Ohio) from replacing a more
+    // specific selection (Ohio State) before the matchup is known.
+    const selectionSource=candidate.rawSelection||candidate.selection||'';
+    const selAway=importTeamTextScore(selectionSource,game.away);
+    const selHome=importTeamTextScore(selectionSource,game.home);
     if(away>=78&&home>=78){
-      const selAway=importTeamTextScore(candidate.selection||'',game.away);
-      const selHome=importTeamTextScore(candidate.selection||'',game.home);
       return {score:1000+away+home,selectionTeam:selAway>=78||selHome>=78?(selAway>=selHome?game.away:game.home):null};
     }
+    // 2.9.9: one readable matchup side + a selection that identifies the
+    // opposite side is enough to prove a unique game. This covers cases such
+    // as "Miami Florida @ Clemson" where the sportsbook school wording differs
+    // from ESPN's canonical team name.
+    if(away>=78&&selHome>=78)return {score:940+away+selHome,selectionTeam:game.home};
+    if(home>=78&&selAway>=78)return {score:940+home+selAway,selectionTeam:game.away};
   }
   return null;
 }
@@ -2129,8 +2152,8 @@ function buildImportReconciliationDiagnostic(candidate,activeWeek){
   const pair=extractImportMatchupPair(candidate?.eventText||'');
   const games=weekGames(Number(activeWeek));
   const tested=games.map(game=>{
-    const pairAway=pair?importTeamTextScore(pair.away,game.away):0;
-    const pairHome=pair?importTeamTextScore(pair.home,game.home):0;
+    const pairAway=pair?Math.max(importTeamTextScore(pair.away,game.away),importTruncatedTeamSideScore(pair.away,game.away)):0;
+    const pairHome=pair?Math.max(importTeamTextScore(pair.home,game.home),importTruncatedTeamSideScore(pair.home,game.home)):0;
     const selAway=importTeamTextScore(candidate?.selection||'',game.away);
     const selHome=importTeamTextScore(candidate?.selection||'',game.home);
     const direct=directImportMatchupForGame(candidate,game);
@@ -2160,7 +2183,7 @@ function buildImportReconciliationDiagnostic(candidate,activeWeek){
 
 function canonicalImportSelectionForMatchedGame(candidate,game){
   if(!candidate||!game||candidate.betType==='Total')return candidate?.selection||'';
-  const source=[candidate.rawSelection,candidate.selection].filter(Boolean).join(' ');
+  const source=candidate.rawSelection||candidate.selection||'';
   const awayScore=importTeamTextScore(source,game.away);
   const homeScore=importTeamTextScore(source,game.home);
   if(awayScore>=60||homeScore>=60)return awayScore>=homeScore?game.away:game.home;
@@ -2299,6 +2322,10 @@ function recoverDraftKingsSettledMatchup(candidate){
 }
 function normalizeCandidateAgainstKnownGames(candidate){
   if(!candidate)return candidate;
+  // Keep the sportsbook's original selection text permanently. Reconciliation
+  // may canonicalize candidate.selection, but rawSelection remains authoritative
+  // for resolving specific names such as "Ohio State" vs "Ohio".
+  if(!candidate.rawSelection && candidate.selection)candidate.rawSelection=candidate.selection;
   const evidence=[candidate.selection,candidate.eventText,candidate.contextText].filter(Boolean).join('\n');
   const clues=extractImportTeamClues(evidence);
   const selectionClues=extractImportTeamClues(candidate.selection||'');
@@ -3262,9 +3289,14 @@ function parseScreenshotMultiLegTicket(){
     // FanDuel OCR commonly flattens the two-column footer into:
     // "$10.00 $104.72 TOTAL WAGER TOTAL PAYOUT". Keep the values paired with their labels.
     const paired=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\s+(?:TOTAL\s+)?WAGER\s+(?:TOTAL\s+)?PAYOUT/i);
+    const returnedPair=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\s+(?:TOTAL\s+)?WAGER\s+RETURNED/i);
     if(paired){
       if(stakeUsd==null){stakeUsd=Number(paired[1].replace(/,/g,''));stakeSource=sourceIndex;}
       if(totalPayoutUsd==null){totalPayoutUsd=Number(paired[2].replace(/,/g,''));payoutSource=sourceIndex;}
+    }else if(returnedPair){
+      // Settled FanDuel tickets use "$5.00 $0.00 / TOTAL WAGER RETURNED".
+      // The second amount is a settlement return, never the wager.
+      if(stakeUsd==null){stakeUsd=Number(returnedPair[1].replace(/,/g,''));stakeSource=sourceIndex;}
     }else{
       const wm=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\n\s*)?TOTAL\s+WAGER/i);
       const pm=text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\n\s*)?TOTAL\s+PAYOUT/i);
