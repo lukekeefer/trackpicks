@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.7';
+const BUILD_VERSION = '2.9.8';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3351,66 +3351,111 @@ function parseScreenshotMultiLegTicket(){
     return best;
   };
 
-  // 2.9.7: uploaded file order is not ticket order. Build the strongest directed
-  // overlap chain first, then feed that order into the already-proven stitcher.
+  // 2.9.8: determine screenshot order from RAW parsed wager identity before Week/game
+  // reconciliation. Ordering and game matching are separate jobs: a truncated matchup can
+  // still be excellent evidence that two screenshots touch.
+  const rawNorm=c=>({
+    sel:normalizeImportTeamText(c?.selection||c?.matchedSelection||''),
+    type:String(c?.betType||'').toLowerCase(),
+    line:Number.isFinite(Number(c?.line))?Number(c.line):null,
+    odds:Number.isFinite(Number(c?.odds))?Number(c.odds):null
+  });
+  const rawOverlapScore=(a,b)=>{
+    const x=rawNorm(a),y=rawNorm(b);let score=0;
+    if(x.sel&&y.sel&&x.sel===y.sel)score+=10;
+    if(x.type&&y.type&&x.type===y.type)score+=4;
+    if(x.line!=null&&y.line!=null&&x.line===y.line)score+=2;
+    if(x.odds!=null&&y.odds!=null&&x.odds===y.odds)score+=2;
+    return score;
+  };
+  const rawSameLeg=(a,b)=>{
+    const x=rawNorm(a),y=rawNorm(b);
+    if(!x.sel||x.sel!==y.sel)return false;
+    if(x.type&&y.type&&x.type!==y.type)return false;
+    // Selection + market is enough at a screenshot boundary. Price is supporting evidence;
+    // OCR can drop it on one copy of the repeated leg.
+    return rawOverlapScore(a,b)>=10;
+  };
+  const rawPerImage=items.map((item,sourceIndex)=>(item.candidates||[]).map(c=>({...c,sourceScreenshotIndex:sourceIndex})));
+  const findRawBoundaryOverlap=(left,right)=>{
+    const max=Math.min(5,left.length,right.length);
+    for(let n=max;n>=1;n--){
+      let ok=true,score=0;
+      for(let j=0;j<n;j++){
+        const a=left[left.length-n+j],b=right[j];
+        if(!rawSameLeg(a,b)){ok=false;break;}
+        score+=20+rawOverlapScore(a,b);
+      }
+      if(ok)return {leftStart:left.length-n,rightStart:0,count:n,score};
+    }
+    let best=null;
+    const l0=Math.max(0,left.length-5),rMax=Math.min(5,right.length);
+    for(let li=l0;li<left.length;li++)for(let ri=0;ri<rMax;ri++){
+      if(!rawSameLeg(left[li],right[ri]))continue;
+      const score=rawOverlapScore(left[li],right[ri])+(li-l0)+(rMax-ri);
+      if(!best||score>best.score)best={leftStart:li,rightStart:ri,count:1,score};
+    }
+    return best;
+  };
+  const uploadedOrder=rawPerImage.map((_,i)=>i);
+  const uploadedHits=uploadedOrder.slice(1).map((to,i)=>findRawBoundaryOverlap(rawPerImage[uploadedOrder[i]],rawPerImage[to]));
+  const uploadedOrderValid=uploadedHits.every(Boolean);
   const findScreenshotOrder=()=>{
-    if(perImage.length<=1)return {order:[0],score:0};
+    if(rawPerImage.length<=1)return {order:[0],score:0,mode:'single'};
     const attempts=[];
-    for(let start=0;start<perImage.length;start++){
-      const order=[start],unused=new Set(perImage.map((_,i)=>i).filter(i=>i!==start));
+    for(let start=0;start<rawPerImage.length;start++){
+      const order=[start],unused=new Set(rawPerImage.map((_,i)=>i).filter(i=>i!==start));
       let score=0,valid=true;
       while(unused.size){
         const from=order[order.length-1];
-        const options=[...unused].map(to=>({to,hit:findBoundaryOverlap(perImage[from],perImage[to])})).filter(x=>x.hit).sort((a,b)=>b.hit.score-a.hit.score);
+        const options=[...unused].map(to=>({to,hit:findRawBoundaryOverlap(rawPerImage[from],rawPerImage[to])})).filter(x=>x.hit).sort((a,b)=>b.hit.score-a.hit.score);
         if(!options.length){valid=false;break;}
-        // If two different next screenshots are exactly tied, do not guess.
         if(options.length>1&&options[0].hit.score===options[1].hit.score){valid=false;break;}
         const best=options[0];order.push(best.to);unused.delete(best.to);score+=best.hit.score;
       }
-      if(valid)attempts.push({order,score});
+      if(valid)attempts.push({order,score,mode:'raw-auto'});
     }
     attempts.sort((a,b)=>b.score-a.score);
-    if(!attempts.length)return null;
-    if(attempts.length>1&&attempts[0].score===attempts[1].score&&attempts[0].order.join(',')!==attempts[1].order.join(','))return null;
-    return attempts[0];
+    if(attempts.length&&!(attempts.length>1&&attempts[0].score===attempts[1].score&&attempts[0].order.join(',')!==attempts[1].order.join(',')))return attempts[0];
+    // Never make a correctly uploaded batch worse just because automatic ordering is ambiguous.
+    if(uploadedOrderValid)return {order:uploadedOrder,score:uploadedHits.reduce((n,h)=>n+(h?.score||0),0),mode:'upload-fallback'};
+    return null;
   };
   const ordered=findScreenshotOrder();
   if(!ordered){
-    return {error:'Could not confidently determine the screenshot order. Keep at least one repeated wager leg between consecutive screenshots.',expectedLegs,isTeaser};
+    return {error:'Could not confidently determine screenshot order from the repeated wager legs. Keep the screenshots in ticket order or include at least one repeated leg between each pair.',expectedLegs,isTeaser};
   }
   const screenshotOrder=ordered.order;
   stitchDiagnostics.order={
-    uploaded:perImage.map((_,i)=>i),
+    uploaded:uploadedOrder,
     resolved:screenshotOrder,
     autoReordered:screenshotOrder.some((x,i)=>x!==i),
-    score:ordered.score
+    score:ordered.score,
+    mode:ordered.mode
   };
+
+  // The raw overlaps establish the chain. Once ordered, merge only reconciled TrackPicks
+  // candidates into the final wager; do not require the repeated boundary leg itself to
+  // survive reconciliation on both screenshots.
   let stitched=perImage[screenshotOrder[0]]?[...perImage[screenshotOrder[0]]]:[];
   let overlapCount=0;
   for(let oi=1;oi<screenshotOrder.length;oi++){
-    const prevSource=screenshotOrder[oi-1], nextSource=screenshotOrder[oi];
-    const next=perImage[nextSource];
-    const hit=findBoundaryOverlap(stitched,next);
-    if(!hit){
+    const prevSource=screenshotOrder[oi-1],nextSource=screenshotOrder[oi];
+    const rawHit=findRawBoundaryOverlap(rawPerImage[prevSource],rawPerImage[nextSource]);
+    if(!rawHit){
       return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
     }
     overlapCount++;
-    // Record original upload positions even when TrackPicks auto-reorders the batch.
-    const anchorLeft=hit.leftStart+hit.count-1, anchorRight=hit.rightStart+hit.count-1;
+    const leftRaw=rawPerImage[prevSource][rawHit.leftStart+rawHit.count-1];
+    const rightRaw=rawPerImage[nextSource][rawHit.rightStart+rawHit.count-1];
     stitchDiagnostics.connections.push({
-      fromScreenshot:prevSource+1,
-      toScreenshot:nextSource+1,
-      count:hit.count,
-      score:hit.score,
-      leftLabel:importCandidateLabel(stitched[anchorLeft]),
-      rightLabel:importCandidateLabel(next[anchorRight]),
-      decision:'MERGE OVERLAP'
+      fromScreenshot:prevSource+1,toScreenshot:nextSource+1,count:rawHit.count,score:rawHit.score,
+      leftLabel:importCandidateLabel(leftRaw),rightLabel:importCandidateLabel(rightRaw),decision:'RAW OVERLAP → MERGE CHAIN'
     });
-    stitched[anchorLeft]=mergeLeg(stitched[anchorLeft],next[anchorRight]);
-    for(let j=anchorRight+1;j<next.length;j++){
-      const duplicateIndex=stitched.findIndex(x=>isSameLeg(x,next[j]));
-      if(duplicateIndex>=0)stitched[duplicateIndex]=mergeLeg(stitched[duplicateIndex],next[j]);
-      else stitched.push(next[j]);
+    for(const c of perImage[nextSource]){
+      const duplicateIndex=stitched.findIndex(x=>isSameLeg(x,c));
+      if(duplicateIndex>=0)stitched[duplicateIndex]=mergeLeg(stitched[duplicateIndex],c);
+      else stitched.push(c);
     }
   }
   // Final de-dupe uses reconciled game/selection/market identity instead of raw OCR fingerprints.
@@ -3662,6 +3707,8 @@ ${escapeAttr((d.trace.topGames||[]).join('\n')||'none')}</pre></div>`).join('')}
     <div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Screenshots</div><span class="settings-page-top-spacer"></span></div>
     <div class="screenshot-import-scroll">
       <div class="screenshot-import-summary"><div><strong>Week ${importWeek} import · ${files.length} screenshot${files.length===1?'':'s'}</strong><span>${totalCandidates?`${totalCandidates} wager candidate${totalCandidates===1?'':'s'} detected · Week ${importWeek} only`:`Bulk review queue · Week ${importWeek} only`}</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
+      <button type="button" class="secondary full-width" data-import-help>How to Import Picks</button>
+      ${state.screenshotImportHelp?`<div class="parsed-bet-card" style="margin-top:10px"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><strong>How to Import Picks</strong><button type="button" class="secondary" data-close-import-help>Close</button></div><div style="margin-top:10px;line-height:1.5"><strong>Current week only.</strong> Only import bets for the Slip week you are working on.<br><br><strong>Singles:</strong> Upload all single bets together as one batch.<br><br><strong>Parlays & teasers:</strong> Upload each multi-leg bet as its own separate batch. If one bet spans multiple screenshots, include all of those screenshots together.<br><br><strong>Long parlays:</strong> Keep at least one repeated leg visible between consecutive screenshots. TrackPicks uses those repeated legs to order and stitch the ticket.<br><br>After you confirm a batch, TrackPicks clears it automatically so the importer is ready for the next bet.</div></div>`:''}
       ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
       ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
       <div class="screenshot-import-actions">${files.length?`<button type="button" class="primary" data-process-screenshots ${state.screenshotImportProcessing?'disabled':''}>${state.screenshotImportProcessing?'Processing Screenshots…':(totalCandidates?'Process Remaining Screenshots':'Process Screenshots')}</button>`:''}<button type="button" class="${files.length?'secondary':'primary'}" data-add-screenshots ${state.screenshotImportProcessing?'disabled':''}>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch '+(state.screenshotImportProcessing?'disabled':'')+'>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
@@ -3873,6 +3920,8 @@ function bind(){
   document.querySelectorAll('[data-screenshot-file-input]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-close-screenshot-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;render();});
   document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
+  document.querySelectorAll('[data-import-help]').forEach(el=>el.onclick=()=>{state.screenshotImportHelp=true;render();});
+  document.querySelectorAll('[data-close-import-help]').forEach(el=>el.onclick=()=>{state.screenshotImportHelp=false;render();});
   document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-process-screenshots]').forEach(el=>el.onclick=processScreenshotBatch);
   document.querySelectorAll('[data-review-screenshot-results]').forEach(el=>el.onclick=startScreenshotSlipWorkflow);
