@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.9';
+const BUILD_VERSION = '2.9.10';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -2404,7 +2404,7 @@ function matchScreenshotCandidateToWeek(candidate,week){
     candidate.matchedWeek=activeWeek;
     candidate.matchedAway=inWeek.game.away;
     candidate.matchedHome=inWeek.game.home;
-    const canonicalSelected=candidate.betType==='Total'?candidate.selection:(inWeek.selectionTeam||candidate.dkRecoveredSelection||canonicalImportSelectionForMatchedGame(candidate,inWeek.game));
+    const canonicalSelected=candidate.betType==='Total'?candidate.selection:(canonicalImportSelectionForMatchedGame(candidate,inWeek.game)||inWeek.selectionTeam||candidate.dkRecoveredSelection);
     if(candidate.betType!=='Total'&&canonicalSelected)candidate.selection=canonicalSelected;
     candidate.matchedSelection=canonicalSelected||candidate.selection;
     candidate.reviewState=`Matched Week ${activeWeek}`;
@@ -2425,7 +2425,7 @@ function matchScreenshotCandidateToWeek(candidate,week){
     candidate.matchedHome=outside.game.home;
     if(candidate.betType==='Total')candidate.matchedSelection=candidate.selection;
     else{
-      const selected=outside.selectionTeam||candidate.dkRecoveredSelection||canonicalImportSelectionForMatchedGame(candidate,outside.game);
+      const selected=canonicalImportSelectionForMatchedGame(candidate,outside.game)||outside.selectionTeam||candidate.dkRecoveredSelection;
       if(selected){candidate.selection=selected;candidate.matchedSelection=selected;}
     }
   }else{
@@ -3332,7 +3332,20 @@ function parseScreenshotMultiLegTicket(){
       decision:c.matchStatus==='matched'?'ELIGIBLE FOR STITCH':`EXCLUDED BEFORE STITCH — matchStatus=${c.matchStatus||'unknown'}`
     }));
     stitchDiagnostics.screenshots.push({sourceIndex,rawCount:raw.length,eligibleCount:rows.filter(r=>r.matchStatus==='matched').length,candidates:rows});
-    return raw.filter(c=>c.matchStatus==='matched').map((c,candidateIndex)=>({...c,sourceScreenshotIndex:sourceIndex,_stitchCandidateIndex:candidateIndex}));
+    // 2.9.10: reconciliation may change identity, never sportsbook order. Derive an
+    // immutable visual/OCR position from the original screenshot text and carry it
+    // through stitching. Event rows are preferred over selection text because ticket
+    // summaries can repeat selections near the top of the screenshot.
+    const ocrHaystack=normalizeImportTeamText(item.ocrText||item.rawOcrText||'');
+    const withPosition=raw.map((c,rawIndex)=>{
+      const eventNeedle=normalizeImportTeamText(c.eventText||'');
+      const selectionNeedle=normalizeImportTeamText(c.rawSelection||c.selection||'');
+      let ocrPosition=eventNeedle.length>=6?ocrHaystack.indexOf(eventNeedle):-1;
+      if(ocrPosition<0&&selectionNeedle.length>=3)ocrPosition=ocrHaystack.indexOf(selectionNeedle);
+      if(ocrPosition<0)ocrPosition=1000000+rawIndex;
+      return {...c,sourceScreenshotIndex:sourceIndex,_sourceRawIndex:rawIndex,_sourceOcrPosition:ocrPosition};
+    });
+    return withPosition.filter(c=>c.matchStatus==='matched').sort((a,b)=>a._sourceOcrPosition-b._sourceOcrPosition||a._sourceRawIndex-b._sourceRawIndex).map((c,candidateIndex)=>({...c,_stitchCandidateIndex:candidateIndex}));
   });
   const norm=c=>({
     game:String(c?.matchedGameId||''),
