@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.12';
+const BUILD_VERSION = '2.9.13';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -1643,11 +1643,12 @@ function parseMarketHeaderNear(lines,marketIndex,market){
       // preferred; an unsigned 3/4 digit token is retained as uncertain, not guessed.
       const signed=[...statusless.matchAll(/(?:^|\s)([+-]\d{3,4})(?=\s|$)/g)].pop();
       const unsigned=!signed?[...statusless.matchAll(/(?:^|\s)(\d{3,4})(?=\s|$)/g)].pop():null;
-      let selection=knownTeam;
-      if(!selection){
-        const cut=(signed||unsigned)?.index;
-        selection=cleanSelectionName(cut==null?statusless:statusless.slice(0,cut));
-      }
+      // 2.9.13: preserve the sportsbook's literal selection text here. Do not
+      // globally canonicalize a header before we know its matched game; e.g.
+      // "Ohio State" must remain "Ohio State", not become "Ohio Bobcats".
+      const cut=(signed||unsigned)?.index;
+      let selection=cleanSelectionName(cut==null?statusless:statusless.slice(0,cut));
+      if(!selection)selection=knownTeam;
       if(selection){
         return {index:i,selection,line:null,odds:signed?Number(signed[1]):null,rawOddsToken:unsigned?unsigned[1]:'',oddsNeedsReview:!!unsigned};
       }
@@ -1658,7 +1659,9 @@ function parseMarketHeaderNear(lines,marketIndex,market){
       if(!spreadMatches.length)continue;
       const sm=spreadMatches[0];
       const line=normalizeParsedSpreadLine(sm[1].replace(/\s+/g,''),'card');
-      let selection=knownTeam||cleanSelectionName(statusless.slice(0,sm.index));
+      // 2.9.13: same invariant for spreads: keep the literal sportsbook side
+      // until game-aware reconciliation can constrain it to one of the two teams.
+      let selection=cleanSelectionName(statusless.slice(0,sm.index))||knownTeam;
       if(!selection)continue;
       const after=statusless.slice((sm.index||0)+sm[0].length);
       const signed=after.match(/(?:^|\s|[|Il•·])([+-]\d{3,4})(?=\s|$)/);
