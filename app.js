@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.6';
+const BUILD_VERSION = '3.0.7';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -154,7 +154,7 @@ const state = {
   activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
   gameTeamStats: {}, gameTeamStatsLoading: false,
   standardUnitSize: null,
-  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null, screenshotImportFlow: null, publicPickDetail: null, publicBettingMarket: 'spread'
+  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null, screenshotImportFlow: null, screenshotImportReadyToReview: false, publicPickDetail: null, publicBettingMarket: 'spread'
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -1378,6 +1378,7 @@ async function queueScreenshotFiles(fileList){
   }
   state.screenshotImportFiles=[...state.screenshotImportFiles,...created];
   state.screenshotImportMessage='';
+  state.screenshotImportReadyToReview=false;
   state.showScreenshotImporter=true;
   render();
 }
@@ -2520,6 +2521,7 @@ async function processScreenshotBatch(){
   }finally{
     try{await worker?.terminate();}catch(_e){}
     state.screenshotImportProcessing=false;
+    if(state.screenshotImportFiles.some(x=>(x.candidates||[]).length||x.status==='Needs review')) state.screenshotImportReadyToReview=true;
     render();
   }
 }
@@ -2605,6 +2607,7 @@ function buildImportReconciliationDiagnostic(candidate,activeWeek){
     activeWeek:Number(activeWeek),bestDirect,bestNormal,reason,tested
   };
 }
+
 function importOcrConfusablePhraseMatch(text,form){
   // 2.9.3: OCR commonly reads an uppercase I as lowercase l ("Iowa" -> "lowa").
   // Treat that as a strong match only when every other character in the phrase agrees.
@@ -2630,6 +2633,7 @@ function importOcrConfusablePhraseMatch(text,form){
   }
   return false;
 }
+
 function importOcrSchoolPrefixMatch(text,form){
   // 2.9.5: sportsbook event rows often use the school name while TrackPicks stores
   // the full ESPN name including mascot ("Iowa State" vs "Iowa State Cyclones").
@@ -2651,6 +2655,7 @@ function importOcrSchoolPrefixMatch(text,form){
   };
   return a.every((token,i)=>tokenMatch(token,b[i]));
 }
+
 function importTruncatedTeamSideScore(text,teamName){
   const raw=normalizeImportTeamText(text).replace(/\s+/g,' ').trim();
   if(raw.length<4)return 0;
@@ -2663,13 +2668,13 @@ function importTruncatedTeamSideScore(text,teamName){
   }
   return best;
 }
+
 function loadStitchedScreenshotParlay(){
   const f=state.screenshotImportFlow;if(!f||f.saving||!f.multiLeg)return;
   const t=f.multiLeg;
-  if(!t.complete){alert(`TrackPicks found ${t.legs.length} of ${t.expectedLegs} unique legs. Add/retake screenshots with overlap until all ${t.expectedLegs} legs are visible.`);return;}
-  if(!Number.isFinite(Number(t.odds))){alert('TrackPicks could not read the ticket payout odds. Keep this batch and retake the screenshot with the parlay header visible.');return;}
+    if(!Number.isFinite(Number(t.odds))){alert('TrackPicks could not read the ticket payout odds. Keep this batch and retake the screenshot with the parlay header visible.');return;}
   const legs=t.legs.map(screenshotCandidateToParlayLeg).filter(Boolean);
-  if(legs.length!==t.expectedLegs){alert('One or more stitched legs could not be matched to a TrackPicks game.');return;}
+  if(!legs.length){alert('No matched legs remain to add to the Slip.');return;}
   resetParlayDraft();
   state.parlayDraft.legs=legs;
   state.parlayDraft.who=state.displayName||'';
@@ -2684,6 +2689,7 @@ function loadStitchedScreenshotParlay(){
   state.screenshotImportWeek=null;
   state.screenshotImportMessage='';
   state.screenshotImportProcessing=false;
+  state.screenshotImportReadyToReview=false;
   state.showScreenshotImporter=false; state.view='slip'; state.slipTab='parlays'; render();
 }
 function parseScreenshotMultiLegTicket(){
@@ -2696,6 +2702,10 @@ function parseScreenshotMultiLegTicket(){
   const expectedLegs=Number(header[1]);
   if(!Number.isFinite(expectedLegs)||expectedLegs<2)return null;
   const isTeaser=header[3].toLowerCase()==='teaser';
+  // 2.10: one multi-leg ticket per batch. Repeated copies of the same header are fine,
+  // but conflicting leg-count/type headers indicate multiple parlays/teasers.
+  const headerSigs=[...joined.matchAll(/\b(\d{1,2})\s*leg\s+(?:(?:college\s+football)\s+)?(parlay|teaser)\b/gi)].map(m=>`${m[1]}:${m[2].toLowerCase()}`);
+  if(new Set(headerSigs).size>1)return {error:'Multiple multi-leg bets detected. For now, import each parlay or teaser as its own separate batch.'};
 
   // 2.9.6: ticket-level metadata belongs to the stitched bet, not an individual leg.
   // Parse every screenshot independently so a header on image 1 and footer on image 2 combine cleanly.
@@ -2965,7 +2975,6 @@ function screenshotSelectionFitsMatchedGame(c){
   const home=normalizeTeamName(c.matchedHome||'');
   return !!((away&&sel===away)||(home&&sel===home));
 }
-
 function effectivePickerNames(){
   const names=[state.displayName,...state.pickerNames].filter(Boolean);
   return [...new Set(names)];
@@ -3035,7 +3044,7 @@ function marketTopbar(){ return appHeader(headerWeekSelect()); }
 
 function topbar(){
   if(state.view==='market')return marketTopbar();
-  if(state.view==='slip')return appHeader(`<button type="button" class="slip-header-import-btn" data-open-screenshot-import>Import</button><input type="file" data-screenshot-file-input accept="image/*" multiple hidden>`);
+  if(state.view==='slip')return appHeader(`<button type="button" class="tp-import-header-btn slip-header-import-btn" data-launch-import>Import</button>`);
   if(state.view==='dashboard')return appHeader(`<div class="app-header-screen-label">Dashboard</div>`);
   if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
   return appHeader();
@@ -3837,12 +3846,13 @@ function renderScreenshotImportFlow(){
     const orderDiag=d?.order?`<div class="parsed-bet-card"><strong>Screenshot order</strong><div style="margin-top:6px">${d.order.autoReordered?`Auto-reordered: ${d.order.resolved.map(i=>`Screenshot ${i+1}`).join(' → ')}`:`Upload order already correct: ${d.order.resolved.map(i=>`Screenshot ${i+1}`).join(' → ')}`}</div></div>`:'';
     const metadataDiag=d?.metadata?`<div class="parsed-bet-card"><strong>Bet metadata</strong><div style="margin-top:6px">Payout odds: ${d.metadata.odds==null?'Needs header':escapeAttr(signed(d.metadata.odds))}${d.metadata.oddsSource!=null?` · Screenshot ${d.metadata.oddsSource+1} header`:''}<br>Wager: ${d.metadata.stakeUsd==null?'Needs review':escapeAttr(formatUsd(d.metadata.stakeUsd))}${d.metadata.stakeSource!=null?` · Screenshot ${d.metadata.stakeSource+1} footer`:''}<br>Total payout: ${d.metadata.totalPayoutUsd==null?'Not detected':escapeAttr(formatUsd(d.metadata.totalPayoutUsd))}${d.metadata.payoutSource!=null?` · Screenshot ${d.metadata.payoutSource+1} footer`:''}</div></div>`:'';
     const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${orderDiag}${metadataDiag}${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br>${r.selectionTrace?`<span><strong>Selection lifecycle:</strong> raw ${escapeAttr(r.selectionTrace.rawSelection||r.rawSelection||'—')} → match entry ${escapeAttr(r.selectionTrace.matchEntry||'—')} → normalized ${escapeAttr(r.selectionTrace.afterNormalizeForMatch||r.selectionTrace.afterNormalize||'—')} → pre-game ${escapeAttr(r.selectionTrace.beforeMatchedGameCanonical||'—')} → canonical result ${escapeAttr(r.selectionTrace.canonicalResult||'—')} → final ${escapeAttr(r.selectionTrace.afterMatchedGameCanonical||r.currentSelection||'—')} · matchedSelection ${escapeAttr(r.selectionTrace.matchedSelection||r.matchedSelection||'—')}</span><br>`:''}<span>Decision: ${escapeAttr(r.decision)}</span>${r.reconciliationDiagnostic?`<details style="margin-top:6px"><summary>Reconciliation trace</summary><div style="margin-top:6px;font-size:12px;line-height:1.45"><strong>Parsed matchup:</strong> ${escapeAttr(r.reconciliationDiagnostic.parsedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.parsedHome||'—')}<br><strong>Normalized:</strong> ${escapeAttr(r.reconciliationDiagnostic.normalizedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.normalizedHome||'—')}<br><strong>Selection:</strong> ${escapeAttr(r.reconciliationDiagnostic.selection||'—')} → ${escapeAttr(r.reconciliationDiagnostic.normalizedSelection||'—')}<br><strong>Reason:</strong> ${escapeAttr(r.reconciliationDiagnostic.reason||'—')}<br><strong>Top Week ${escapeAttr(String(r.reconciliationDiagnostic.activeWeek))} comparisons:</strong>${(r.reconciliationDiagnostic.tested||[]).map((t,ti)=>`<br>${ti+1}. ${escapeAttr(t.away)} @ ${escapeAttr(t.home)} · pair ${t.pairAway}/${t.pairHome} · selection ${t.selAway}/${t.selHome} · direct ${t.directScore} · normal ${t.normalScore}`).join('')}</div></details>`:''}</div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
-    const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} overlap connection${t.overlapCount===1?'':'s'} verified across ${t.screenshotCount} screenshots.`:'Single screenshot ticket.'}</div><div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card"><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div>`).join('')}</div><div class="parsed-bet-card"><strong>${t.expectedLegs}-leg ${escapeAttr(kind)}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>${diag}`;
-    return shell('Stitched Multi-Leg Bet',body,`<button class="primary" data-load-stitched-parlay ${!t.complete?'disabled':''}>Load ${t.expectedLegs}-Leg ${t.isTeaser?'Teaser':'Parlay'} into Slip</button><button class="secondary" data-cancel-import-flow>Back to Screenshots</button>`);
+    const topAction=`<button class="primary tp-big-action" data-load-stitched-parlay ${!t.legs.length?'disabled':''}>Add to Slip</button>`;
+    const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} screenshot connection${t.overlapCount===1?'':'s'} verified.`:'Single screenshot ticket.'}</div><div class="parsed-bet-card"><strong>1 ${escapeAttr(kind)} found · ${t.legs.length} leg${t.legs.length===1?'':'s'}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>${topAction}<div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card tp-review-leg"><div><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div><button type="button" class="tp-leg-delete" data-delete-import-leg="${i}" aria-label="Remove leg">×</button></div>`).join('')}</div>${diag}`;
+    return shell('Review Picks',body,`<button class="secondary" data-cancel-import-flow>Back to Screenshots</button>`);
   }
   if(f.stage==='ready'){
-    const body=`<p>Confirm these ${f.ready.length} complete wager${f.ready.length===1?'':'s'} together before TrackPicks adds them to your Slip.</p><div class="parsed-bets-list">${f.ready.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div><div>${escapeAttr(signed(c.odds))} · ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u</div></div>`).join('')}</div>`;
-    return shell('Ready for Slip',body,`<button class="primary" data-confirm-ready-import ${f.saving?'disabled':''}>${f.saving?'Adding…':`Confirm All & Add ${f.ready.length} to Slip`}</button><button class="secondary" data-cancel-import-flow>Cancel</button>`);
+    const body=`<p><strong>${f.ready.length} pick${f.ready.length===1?'':'s'} found</strong></p><button class="primary tp-big-action" data-confirm-ready-import ${f.saving?'disabled':''}>${f.saving?'Adding…':'Add All to Slip'}</button><div class="parsed-bets-list">${f.ready.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div><div>${escapeAttr(signed(c.odds))} · ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u</div></div>`).join('')}</div>`;
+    return shell('Review Picks',body,`<button class="secondary" data-cancel-import-flow>Cancel</button>`);
   }
   if(f.stage==='duplicates'){
     const r=f.duplicates[f.index],c=r.candidate,w=r.existing;const body=`<div class="parsed-bet-warning"><strong>Existing pick ${f.index+1} of ${f.duplicates.length}</strong><br>TrackPicks found this pick in your Slip. Screenshot values can update the sportsbook fields without replacing your TrackPicks pick.</div><div class="parsed-bets-list"><div class="parsed-bet-card"><strong>Existing Slip</strong><div>${escapeAttr(w.pick)}</div><div>Actual line ${escapeAttr(String(w.line))} · Payout ${escapeAttr(signed(w.payoutOdds))} · ${escapeAttr(String(w.units))}u</div></div><div class="parsed-bet-card"><strong>Screenshot</strong><div>${escapeAttr(importCandidateLabel(c))}</div><div>Actual line ${escapeAttr(String(c.line??'—'))} · Payout ${escapeAttr(c.odds==null?'—':signed(c.odds))} · ${escapeAttr(c.units==null?'—':String(c.units))}u</div></div></div>`;
@@ -3858,74 +3868,30 @@ function renderScreenshotImportFlow(){
 }
 
 function renderScreenshotImporter(){
-  const files=state.screenshotImportFiles;
-  const unitSet=Number.isFinite(Number(state.standardUnitSize))&&Number(state.standardUnitSize)>0;
-  const totalCandidates=files.reduce((sum,item)=>sum+(item.candidates?.length||0),0);
+  const files=state.screenshotImportFiles||[];
   const importWeek=Number(state.screenshotImportWeek ?? state.selectedWeek);
-  const cards=files.length?files.map((item,index)=>{
-    const candidates=(item.candidates||[]).map((c,cIndex)=>{
-      const stake=c.stakeUsd==null?'Stake not detected':`${formatUsd(c.stakeUsd)}${c.units!=null?` → ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u`:''}`;
-      const linePart=c.line==null?'':` ${signed(c.line)}`;
-      const oddsPart=c.odds==null?'':` · ${signed(c.odds)}`;
-      const meta=[c.sportsbook,c.betType,c.status].filter(Boolean).join(' · ');
-      const matchClass=(c.matchStatus==='wrong-week'||c.matchStatus==='future-week')?'wrong-week':c.reviewState==='Ready for Slip'?'matched':'review';
-      const displaySelection=((c.matchStatus==='matched'||c.matchStatus==='wrong-week')&&c.matchedSelection)?c.matchedSelection:c.selection;
-      const matchLine=c.matchStatus==='matched'?`<div class="parsed-bet-match"><strong>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</strong><span>Week ${importWeek} game matched</span></div>`:c.matchStatus==='wrong-week'?`<div class="parsed-bet-warning"><strong>Wrong week.</strong> ${c.matchedAway&&c.matchedHome?`${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)} is a Week ${Number(c.detectedWeek)} game. `:`This appears to be a Week ${Number(c.detectedWeek)} game. `}This batch can only accept Week ${importWeek} games.</div>`:c.matchStatus==='future-week'?`<div class="parsed-bet-warning"><strong>Future wager.</strong> This wager was placed ${escapeAttr(c.placedAt||'after this week')} and cannot be added to Week ${importWeek}. Choose that date's week or a later week and verify the match.</div>`:'';
-      return `<div class="parsed-bet-card">
-        <div class="parsed-bet-head"><span>Bet ${cIndex+1}</span><span class="import-status-chip ${matchClass}">${escapeAttr(c.reviewState||'Needs review')}</span></div>
-        <strong class="parsed-bet-pick">${escapeAttr(displaySelection)}${escapeAttr(linePart)}</strong>
-        <div class="parsed-bet-meta">${escapeAttr(meta)}${escapeAttr(oddsPart)}</div>
-        <div class="parsed-bet-stake">${escapeAttr(stake)}${c.possibleWinningsUsd!=null?`<span> · Possible winnings ${escapeAttr(formatUsd(c.possibleWinningsUsd))}</span>`:''}</div>
-        ${c.layoutType==='compact'?'<div class="parsed-bet-event">Compact row detected</div>':''}
-        ${matchLine}
-        ${c.eventText?`<div class="parsed-bet-event">${escapeAttr(c.eventText)}</div>`:''}
-        ${c.stakeConfidence==='medium'?'<div class="parsed-bet-warning">Check wager amount — inferred from screenshot layout.</div>':''}${(c.missingFields||[]).length?`<div class="parsed-bet-warning"><strong>Needs review:</strong> ${escapeAttr(c.missingFields.join(' · '))}</div>`:''}
-        ${(c.repairNotes||[]).length?`<div class="parsed-bet-warning"><strong>OCR repair:</strong> ${escapeAttr(c.repairNotes.join(' · '))}</div>`:''}
-      </div>`;
-    }).join('');
-    const status=item.status==='Parsing'?`Parsing ${item.progress||0}%`:(item.status||'Queued');
-    return `<article class="screenshot-review-card ${item.candidates?.length?'has-results':''}">
-      <div class="screenshot-thumb-wrap">${item.preview?`<img src="${escapeAttr(item.preview)}" class="screenshot-thumb" alt="Screenshot ${index+1}">`:'<div class="screenshot-thumb-error">Image unavailable</div>'}</div>
-      <div class="screenshot-review-copy"><div class="screenshot-review-top"><strong>Screenshot ${index+1}</strong><span class="import-status-chip ${item.status==='Parsing'?'working':''}">${escapeAttr(status)}</span></div><div class="screenshot-file-name">${escapeAttr(item.fileName)}</div>${item.status==='Parsing'?`<div class="import-progress"><span style="width:${Number(item.progress)||0}%"></span></div>`:''}<div class="screenshot-review-note">${item.candidates?.length?'Parsed locally. Review the detected wager details below.':'Ready for wager parsing. No bet will be added to your Slip until you approve it.'}</div>${item.error?`<div class="parsed-bet-warning">${escapeAttr(item.error)}</div>`:''}</div>
-      ${item.parserDiagnostic?`<details class="parser-debug-panel" open><summary>Parser diagnostics · ${escapeAttr(item.parserDiagnostic.reason)}</summary><div class="parser-debug-grid"><span>Build</span><strong>${escapeAttr(item.parserDiagnostic.build)}</strong><span>Source</span><strong>${escapeAttr(item.parserDiagnostic.source)}</strong><span>Prepared</span><strong>${escapeAttr(item.parserDiagnostic.prepared)}</strong><span>Scale / ratio</span><strong>${escapeAttr(String(item.parserDiagnostic.scale))}× / ${escapeAttr(String(item.parserDiagnostic.ratio))}</strong><span>Layout route</span><strong>${escapeAttr(item.parserDiagnostic.layoutHint)}</strong><span>Sportsbook</span><strong>${escapeAttr(item.parserDiagnostic.detectedSportsbook)}</strong><span>OCR chars</span><strong>${escapeAttr(String(item.parserDiagnostic.normalizedCharCount))}</strong><span>Timestamps</span><strong>${escapeAttr(String(item.parserDiagnostic.timestampCount))}</strong><span>Odds tokens</span><strong>${escapeAttr((item.parserDiagnostic.americanOdds||[]).join(', ')||'none')}</strong><span>Money tokens</span><strong>${escapeAttr((item.parserDiagnostic.moneyTokens||[]).join(', ')||'none')}</strong><span>Compact candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.compactCandidateCount))}</strong><span>Wager anchors</span><strong>${escapeAttr(String(item.parserDiagnostic.wagerAnchorCount??item.parserDiagnostic.finalCandidateCount))}</strong><span>Spread candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.spreadCandidateCount??0))}</strong><span>Moneyline candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.moneylineCandidateCount??0))}</strong><span>Total candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.totalCandidateCount??0))}</strong><span>Final candidates</span><strong>${escapeAttr(String(item.parserDiagnostic.finalCandidateCount))}</strong></div>${(item.parserDiagnostic.compactCandidates||[]).map((c,i)=>`<div class="parser-debug-candidate"><div class="parser-debug-label">Compact candidate ${i+1}</div><pre class="parser-debug-text">Raw selection: ${escapeAttr(c.rawSelection||'(empty)')}\nNormalized selection: ${escapeAttr(c.selection||'(empty)')}\nType: ${escapeAttr(c.betType||'')}\nLine: ${escapeAttr(String(c.line??'none'))}\nOdds: ${escapeAttr(String(c.odds??'none'))}\nMoney: ${escapeAttr(String(c.stakeUsd??'none'))} / ${escapeAttr(String(c.possibleWinningsUsd??'none'))}</pre></div>`).join('')}${item.parserDiagnostic.compactError?`<div class="parsed-bet-warning">Compact parser error: ${escapeAttr(item.parserDiagnostic.compactError)}</div>`:''}${(item.parserDiagnostic.dkSettledDiagnostics||[]).map(d=>`<div class="parser-debug-candidate"><div class="parser-debug-label">DK settled trace · Bet ${d.index}</div><pre class="parser-debug-text">Selection: ${escapeAttr(d.trace.selection||'(empty)')}
-Event before/after recovery: ${escapeAttr(d.trace.eventText||'(empty)')}
-Final detected: ${d.trace.contextHasFinal?'YES':'NO'}
-Scoreboard boundary: ${escapeAttr(d.trace.boundary||'none')}
-Teams recognized: ${escapeAttr((d.trace.teamClues||[]).join(' | ')||'none')}
-Scoreboard row resolution:
-${escapeAttr((d.trace.scoreboardRows||[]).join('\n')||'none')}
-Recovered selection: ${escapeAttr(d.trace.recoveredSelection||'none')}
-Match status: ${escapeAttr(d.trace.matchStatus||'none')}
-Matched game: ${escapeAttr(d.trace.matchedGame||'none')}
-Detected/matched week: ${escapeAttr(String(d.trace.detectedWeek||'none'))}
-
-TWO-TEAM PAIR MATCHES
-${escapeAttr((d.trace.pairMatches||[]).join('\n')||'none')}
-
-FINAL → SHARE BLOCK
-${escapeAttr(d.trace.scoreboard||'(none)')}
-
-TOP TRACKPICKS GAME SCORES
-${escapeAttr((d.trace.topGames||[]).join('\n')||'none')}</pre></div>`).join('')}<div class="parser-debug-label">OCR text reaching parser</div><pre class="parser-debug-text">${escapeAttr(item.parserDiagnostic.ocrText||'(empty)')}</pre></details>`:''}
-      ${candidates?`<div class="parsed-bets-list">${candidates}</div>`:''}
-    </article>`;
-  }).join(''):`<div class="screenshot-import-empty"><strong>No screenshots selected yet.</strong><span>Select one or many sportsbook screenshots to start a review batch.</span></div>`;
-  return `<div class="screenshot-import-overlay"><section class="screenshot-import-page">
-    <div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Screenshots</div><span class="settings-page-top-spacer"></span></div>
-    <div class="screenshot-import-scroll">
-      <div class="screenshot-import-summary"><div><strong>Week ${importWeek} import · ${files.length} screenshot${files.length===1?'':'s'}</strong><span>${totalCandidates?`${totalCandidates} wager candidate${totalCandidates===1?'':'s'} detected · Week ${importWeek} only`:`Bulk review queue · Week ${importWeek} only`}</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
-      <button type="button" class="secondary full-width" data-import-help>How to Import Picks</button>
-      ${state.screenshotImportHelp?`<div class="parsed-bet-card" style="margin-top:10px"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><strong>How to Import Picks</strong><button type="button" class="secondary" data-close-import-help>Close</button></div><div style="margin-top:10px;line-height:1.5"><strong>Current week only.</strong> Only import bets for the Slip week you are working on.<br><br><strong>Singles:</strong> Upload all single bets together as one batch.<br><br><strong>Parlays & teasers:</strong> Upload each multi-leg bet as its own separate batch. If one bet spans multiple screenshots, include all of those screenshots together.<br><br><strong>Long parlays:</strong> Keep at least one repeated leg visible between consecutive screenshots. TrackPicks uses those repeated legs to order and stitch the ticket.<br><br>After you confirm a batch, TrackPicks clears it automatically so the importer is ready for the next bet.</div></div>`:''}
-      ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
-      ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
-      <div class="screenshot-import-actions">${files.length?`<button type="button" class="primary" data-process-screenshots ${state.screenshotImportProcessing?'disabled':''}>${state.screenshotImportProcessing?'Processing Screenshots…':(totalCandidates?'Process Remaining Screenshots':'Process Screenshots')}</button>`:''}<button type="button" class="${files.length?'secondary':'primary'}" data-add-screenshots ${state.screenshotImportProcessing?'disabled':''}>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch '+(state.screenshotImportProcessing?'disabled':'')+'>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
-      ${totalCandidates&&!state.screenshotImportProcessing?`<button type="button" class="primary full-width" data-review-screenshot-results>Review Import Results</button>`:''}
-      <div class="screenshot-import-stage-head"><div><span>Stage 5</span><strong>Reconcile + send to Slip</strong></div><p>TrackPicks automatically reconciles overlapping screenshots first, then groups complete bets, duplicates, review items, and wrong-week bets.</p></div>
-      <div class="screenshot-review-list">${cards}</div>
-    </div>
-  </section></div>`;
+  const unitSet=Number.isFinite(Number(state.standardUnitSize))&&Number(state.standardUnitSize)>0;
+  const processed=files.filter(x=>(x.candidates||[]).length||x.status==='Needs review'||x.status==='Parse error').length;
+  const total=files.length;
+  const overall=total?Math.round(files.reduce((n,x)=>n+(Number(x.progress)||((x.candidates||[]).length?100:0)),0)/total):0;
+  const shell=body=>`<div class="screenshot-import-overlay tp210-import"><section class="screenshot-import-page"><div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Picks</div><span class="settings-page-top-spacer"></span></div><div class="screenshot-import-scroll tp210-import-scroll">${body}</div></section></div>`;
+  if(state.screenshotImportProcessing){
+    return shell(`<div class="tp-process-center"><div class="tp-process-kicker">Week ${importWeek}</div><h2>Processing your screenshots</h2><div class="tp-process-count">${processed} of ${total}</div><div class="tp-progress"><span style="width:${overall}%"></span></div><p>Reading bets and matching games…</p></div>`);
+  }
+  if(state.screenshotImportReadyToReview){
+    const found=files.reduce((n,x)=>n+(x.candidates||[]).filter(c=>c.matchStatus==='matched').length,0);
+    let foundLabel=`${found} pick${found===1?'':'s'} found`;
+    try{
+      const multi=parseScreenshotMultiLegTicket();
+      if(multi&&!multi.error)foundLabel=`1 ${multi.isTeaser?'teaser':'parlay'} found: ${multi.legs.length} legs`;
+    }catch(_e){}
+    return shell(`<div class="tp-process-center"><div class="tp-success-mark">✓</div><h2>${total} of ${total} processed</h2><p>${escapeAttr(foundLabel)}</p><button type="button" class="primary tp-big-action" data-review-screenshot-results>Review Picks</button><details class="tp-diag-peek"><summary>Batch details</summary><div>${files.map((x,i)=>`Screenshot ${i+1}: ${escapeAttr(x.status||'Processed')}`).join('<br>')}</div></details></div>`);
+  }
+  if(!files.length){
+    return shell(`<div class="tp-import-intro"><div class="tp-process-kicker">Week ${importWeek}</div><h2>Import sportsbook screenshots</h2><p>TrackPicks will read your screenshots, match the games, and build the wagers for review before anything is added to your Slip.</p><div class="tp-import-rules"><strong>Before you start</strong><p><b>Singles:</b> Upload all of your single bets together in one batch.</p><p><b>Parlays & teasers:</b> Upload each multi-leg bet as its own separate batch.</p><p><b>Long parlays:</b> Include at least one repeated leg between consecutive screenshots so TrackPicks can stitch them together.</p><p><b>Current week only:</b> Only upload bets for the Slip week you are working on.</p></div>${!unitSet?`<div class="screenshot-import-warning"><strong>Standard unit size is not set.</strong><span>Set it first so TrackPicks can calculate units from wager amounts.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}<button type="button" class="primary tp-big-action" data-add-screenshots>Select Screenshots</button><input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>`);
+  }
+  return shell(`<div class="tp-confirm-batch"><div class="tp-process-kicker">Week ${importWeek}</div><h2>${total} screenshot${total===1?'':'s'} selected</h2><p>Ready to process these images?</p><button type="button" class="primary tp-big-action" data-process-screenshots>Process ${total} Screenshot${total===1?'':'s'}</button><button type="button" class="secondary full-width" data-add-screenshots>Change Selection / Add More</button>${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}<div class="tp-thumb-grid">${files.map((x,i)=>`<div class="tp-thumb"><img src="${escapeAttr(x.preview)}" alt="Screenshot ${i+1}"><button type="button" data-remove-screenshot="${escapeAttr(x.id)}" aria-label="Remove screenshot">×</button><span>${i+1}</span></div>`).join('')}</div><input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>`);
 }
-
 function publicApiUsageSummary(){
   const rows=state.publicApiUsage||[];
   const creditOf=r=>Number(r.credits_used??r.api_credits??r.credits??r.credit_count??0)||0;
@@ -4125,6 +4091,7 @@ function bind(){
   document.querySelectorAll('[data-week]').forEach(el=>el.onclick=()=>{state.selectedWeek=Number(el.dataset.week);state.view='market';state.slateDivision='FBS';state.slateConference='All';state.importMessage='';render();});
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{state.view=el.dataset.nav;render();});
   document.querySelectorAll('[data-settings]').forEach(el=>el.onclick=()=>{state.showSettings=true;render();});
+  document.querySelectorAll('[data-launch-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=true;state.screenshotImportReadyToReview=false;render();});
   document.querySelectorAll('[data-close-settings]').forEach(el=>el.onclick=()=>{state.showSettings=false;render();});
   document.querySelectorAll('[data-save-unit-size]').forEach(el=>el.onclick=async()=>{const input=document.getElementById('standardUnitSizeInput');const result=await saveStandardUnitSize(input?.value);if(!result.ok){alert(result.message);return;}el.textContent='✓ Saved';setTimeout(()=>{if(document.body.contains(el))el.textContent='Save Standard Unit Size';},1200);});
   document.querySelectorAll('[data-open-screenshot-import]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-file-input]')?.click());
@@ -4135,6 +4102,7 @@ function bind(){
   document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
   document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-process-screenshots]').forEach(el=>el.onclick=processScreenshotBatch);
+  document.querySelectorAll('[data-delete-import-leg]').forEach(el=>el.onclick=()=>{const f=state.screenshotImportFlow;if(!f?.multiLeg||f.saving)return;const i=Number(el.dataset.deleteImportLeg);if(Number.isInteger(i)&&i>=0&&i<f.multiLeg.legs.length){f.multiLeg.legs.splice(i,1);f.multiLeg.complete=f.multiLeg.legs.length===f.multiLeg.expectedLegs;render();}});
   document.querySelectorAll('[data-review-screenshot-results]').forEach(el=>el.onclick=startScreenshotSlipWorkflow);
   document.querySelectorAll('[data-load-stitched-parlay]').forEach(el=>el.onclick=loadStitchedScreenshotParlay);
   document.querySelectorAll('[data-confirm-ready-import]').forEach(el=>el.onclick=confirmReadyScreenshotBets);
@@ -4142,8 +4110,8 @@ function bind(){
   document.querySelectorAll('[data-keep-existing-duplicate]').forEach(el=>el.onclick=()=>resolveScreenshotDuplicate(false));
   document.querySelectorAll('[data-save-import-review]').forEach(el=>el.onclick=saveScreenshotReview);
   document.querySelectorAll('[data-close-import-flow],[data-cancel-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=true;render();});
-  document.querySelectorAll('[data-finish-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=false;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportProcessing=false;state.view='slip';render();});
-  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportFlow=null;render();});
+  document.querySelectorAll('[data-finish-import-flow]').forEach(el=>el.onclick=()=>{state.screenshotImportFlow=null;state.showScreenshotImporter=false;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportProcessing=false;state.screenshotImportReadyToReview=false;state.view='slip';render();});
+  document.querySelectorAll('[data-clear-screenshot-batch]').forEach(el=>el.onclick=()=>{if(state.screenshotImportProcessing)return;state.screenshotImportFiles=[];state.screenshotImportWeek=null;state.screenshotImportMessage='';state.screenshotImportFlow=null;state.screenshotImportReadyToReview=false;render();});
   document.querySelectorAll('[data-import-open-settings]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;state.showSettings=true;render();});
   document.querySelectorAll('[data-open-dashboard]').forEach(el=>el.onclick=()=>{state.showSettings=false;state.view='dashboard';render();});
   document.querySelectorAll('[data-import-history]').forEach(el=>el.onclick=()=>document.querySelector('[data-history-file]')?.click());
