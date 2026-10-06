@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.8.3';
+const BUILD_VERSION = '2.9.0';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3152,6 +3152,74 @@ function reconcileScreenshotImportBatch(){
   }
   return groups.map(g=>finalizeScreenshotCandidateReadiness(g.candidate));
 }
+function parseScreenshotMultiLegTicket(){
+  const items=(state.screenshotImportFiles||[]).filter(x=>String(x.ocrText||x.rawOcrText||'').trim());
+  if(!items.length)return null;
+  const joined=items.map(x=>normalizeOcrBetText(x.ocrText||x.rawOcrText||'')).join('\n');
+  // V2.9.0 first pass: require a sportsbook ticket header that explicitly tells us
+  // the leg count. Intentional overlap between screenshots is then used to stitch
+  // the candidate lists without guessing their relationship.
+  const header=joined.match(/\b(\d{1,2})\s*leg\s+(?:(college\s+football)\s+)?(parlay|teaser)\b[^\n]*?([+-]\d{3,5})?/i);
+  if(!header)return null;
+  const expectedLegs=Number(header[1]);
+  if(!Number.isFinite(expectedLegs)||expectedLegs<2)return null;
+  const isTeaser=header[3].toLowerCase()==='teaser';
+  let odds=header[4]?Number(header[4]):null;
+  if(!Number.isFinite(odds)){
+    const headerLine=header[0]; const m=headerLine.match(/([+-]\d{3,5})\s*$/); if(m)odds=Number(m[1]);
+  }
+  const teaserMatch=isTeaser?joined.match(/\bteaser\s*\+?\s*(\d+(?:\.5)?)/i):null;
+  const teaserPoints=teaserMatch?Number(teaserMatch[1]):6;
+  // FanDuel puts TOTAL WAGER in the footer, which may exist only on the final image.
+  const wagerMatches=[...joined.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)\s*\n?\s*TOTAL\s+WAGER/ig)];
+  const stakeUsd=wagerMatches.length?Number(wagerMatches[wagerMatches.length-1][1].replace(/,/g,'')):null;
+  const units=Number.isFinite(stakeUsd)&&Number(state.standardUnitSize)>0?stakeUsd/Number(state.standardUnitSize):null;
+
+  const perImage=items.map((item,sourceIndex)=>(item.candidates||[]).filter(c=>c.matchStatus==='matched').map(c=>({...c,sourceScreenshotIndex:sourceIndex})));
+  const key=c=>{
+    const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
+    const game=c.matchedGameId||`${normalizeTeamName(c.matchedAway||'')}@${normalizeTeamName(c.matchedHome||'')}`;
+    const line=Number.isFinite(Number(c.line))?Number(c.line):'';
+    return `${game}|${c.betType||''}|${sel}|${line}`.toLowerCase();
+  };
+  let overlapCount=0;
+  for(let i=1;i<perImage.length;i++){
+    const prev=new Set(perImage[i-1].map(key));
+    if(perImage[i].some(c=>prev.has(key(c))))overlapCount++;
+  }
+  // Multiple screenshots MUST overlap consecutively. This is deliberately strict:
+  // if we cannot prove the stitch, ask for better screenshots instead of guessing.
+  if(perImage.length>1 && overlapCount<perImage.length-1){
+    return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
+  }
+  const legs=[]; const seen=new Set();
+  for(const rows of perImage)for(const c of rows){const k=key(c);if(!seen.has(k)){seen.add(k);legs.push(c);}}
+  if(!legs.length)return null;
+  return {expectedLegs,isTeaser,teaserPoints,odds:Number.isFinite(odds)?odds:null,stakeUsd,units,legs,overlapCount,screenshotCount:perImage.length,
+    complete:legs.length===expectedLegs};
+}
+function screenshotCandidateToParlayLeg(c){
+  const g=gameById(c.matchedGameId); if(!g)return null;
+  const selection=c.matchedSelection||c.selection;
+  const sourceLine=c.betType==='Moneyline'?null:Number(c.line);
+  return {id:crypto.randomUUID(),gameId:g.id,betType:c.betType,selection,sourceLine:Number.isFinite(sourceLine)?sourceLine:null,odds:Number.isFinite(Number(c.odds))?Number(c.odds):-110,result:'Pending'};
+}
+function loadStitchedScreenshotParlay(){
+  const f=state.screenshotImportFlow;if(!f||f.saving||!f.multiLeg)return;
+  const t=f.multiLeg;
+  if(!t.complete){alert(`TrackPicks found ${t.legs.length} of ${t.expectedLegs} unique legs. Add/retake screenshots with overlap until all ${t.expectedLegs} legs are visible.`);return;}
+  if(!Number.isFinite(Number(t.odds))){alert('TrackPicks could not read the ticket payout odds. Keep this batch and retake the screenshot with the parlay header visible.');return;}
+  const legs=t.legs.map(screenshotCandidateToParlayLeg).filter(Boolean);
+  if(legs.length!==t.expectedLegs){alert('One or more stitched legs could not be matched to a TrackPicks game.');return;}
+  resetParlayDraft();
+  state.parlayDraft.legs=legs;
+  state.parlayDraft.who=state.displayName||'';
+  state.parlayDraft.units=Number.isFinite(Number(t.units))&&Number(t.units)>0?Number(t.units):1;
+  state.parlayDraft.odds=String(t.odds>0?`+${t.odds}`:t.odds);
+  state.parlayDraft.isTeaser=!!t.isTeaser;
+  state.parlayDraft.teaserPoints=t.isTeaser?(Number(t.teaserPoints)||6):6;
+  state.screenshotImportFlow=null; state.showScreenshotImporter=false; state.view='slip'; state.slipTab='parlays'; render();
+}
 function existingSlipDuplicate(c){
   if(c.matchStatus!=='matched'||!c.matchedGameId)return null;
   const sel=normalizeTeamName(c.matchedSelection||c.selection||'');
@@ -3193,6 +3261,12 @@ async function saveScreenshotCandidate(c,existing=null){
 }
 function startScreenshotSlipWorkflow(){
   try{
+    const multiLeg=parseScreenshotMultiLegTicket();
+    if(multiLeg?.error){state.screenshotImportMessage=multiLeg.error;alert(multiLeg.error);state.showScreenshotImporter=true;render();return;}
+    if(multiLeg){
+      state.screenshotImportFlow={multiLeg,stage:'multi',index:0,saving:false};
+      state.showScreenshotImporter=false;render();return;
+    }
     const reconciled=reconcileScreenshotImportBatch();
     const wrong=reconciled.filter(c=>c.matchStatus==='wrong-week'||c.matchStatus==='future-week');
     const usable=reconciled.filter(c=>c.matchStatus==='matched');
@@ -3269,6 +3343,12 @@ function importCandidateLabel(c){const sel=c.matchedSelection||c.selection||'Unk
 function renderScreenshotImportFlow(){
   const f=state.screenshotImportFlow;if(!f)return'';
   const shell=(title,body,actions)=>`<div class="overlay" style="padding-bottom:calc(82px + env(safe-area-inset-bottom, 0px));align-items:flex-end"><section class="sheet" style="max-height:calc(88vh - 82px);overflow:auto;margin-bottom:0"><div class="close-row"><div><div class="eyebrow">Version 2 Import</div><h2 style="margin:4px 0">${escapeAttr(title)}</h2></div><button class="icon-btn" data-close-import-flow aria-label="Cancel import review">✕</button></div>${body}<div style="display:grid;gap:10px;margin-top:16px">${actions}</div></section></div>`;
+  if(f.stage==='multi'){
+    const t=f.multiLeg; const kind=t.isTeaser?'teaser':'parlay';
+    const status=t.complete?`All ${t.expectedLegs} unique legs found`:`Found ${t.legs.length} of ${t.expectedLegs} unique legs`;
+    const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} overlap connection${t.overlapCount===1?'':'s'} verified across ${t.screenshotCount} screenshots.`:'Single screenshot ticket.'}</div><div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card"><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div>`).join('')}</div><div class="parsed-bet-card"><strong>${t.expectedLegs}-leg ${escapeAttr(kind)}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>`;
+    return shell('Stitched Multi-Leg Bet',body,`<button class="primary" data-load-stitched-parlay ${!t.complete?'disabled':''}>Load ${t.expectedLegs}-Leg ${t.isTeaser?'Teaser':'Parlay'} into Slip</button><button class="secondary" data-cancel-import-flow>Back to Screenshots</button>`);
+  }
   if(f.stage==='ready'){
     const body=`<p>Confirm these ${f.ready.length} complete wager${f.ready.length===1?'':'s'} together before TrackPicks adds them to your Slip.</p><div class="parsed-bets-list">${f.ready.map(c=>`<div class="parsed-bet-card"><strong>${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div><div>${escapeAttr(signed(c.odds))} · ${Number(c.units).toFixed(2).replace(/\.00$/,'')}u</div></div>`).join('')}</div>`;
     return shell('Ready for Slip',body,`<button class="primary" data-confirm-ready-import ${f.saving?'disabled':''}>${f.saving?'Adding…':`Confirm All & Add ${f.ready.length} to Slip`}</button><button class="secondary" data-cancel-import-flow>Cancel</button>`);
@@ -3557,6 +3637,7 @@ function bind(){
   document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-process-screenshots]').forEach(el=>el.onclick=processScreenshotBatch);
   document.querySelectorAll('[data-review-screenshot-results]').forEach(el=>el.onclick=startScreenshotSlipWorkflow);
+  document.querySelectorAll('[data-load-stitched-parlay]').forEach(el=>el.onclick=loadStitchedScreenshotParlay);
   document.querySelectorAll('[data-confirm-ready-import]').forEach(el=>el.onclick=confirmReadyScreenshotBets);
   document.querySelectorAll('[data-use-import-duplicate]').forEach(el=>el.onclick=()=>resolveScreenshotDuplicate(true));
   document.querySelectorAll('[data-keep-existing-duplicate]').forEach(el=>el.onclick=()=>resolveScreenshotDuplicate(false));
