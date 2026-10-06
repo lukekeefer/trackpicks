@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.10';
+const BUILD_VERSION = '2.9.11';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -2184,13 +2184,27 @@ function buildImportReconciliationDiagnostic(candidate,activeWeek){
 function canonicalImportSelectionForMatchedGame(candidate,game){
   if(!candidate||!game||candidate.betType==='Total')return candidate?.selection||'';
   const source=candidate.rawSelection||candidate.selection||'';
+
+  // 2.9.11: once the game itself is known, let the sportsbook's explicit matchup
+  // wording identify the selected SIDE before any global alias/team scoring runs.
+  // This prevents a shorter global identity (for example Ohio) from stealing the
+  // exact OCR selection "Ohio State" in an Ohio State @ Iowa wager.
+  const pair=extractImportMatchupPair(candidate.eventText||'');
+  if(pair){
+    const raw=normalizeImportTeamText(source);
+    const a=normalizeImportTeamText(pair.away),h=normalizeImportTeamText(pair.home);
+    const sideMatch=(side)=>side && (raw===side || raw.startsWith(side+' ') || side.startsWith(raw+' '));
+    if(sideMatch(a) && !sideMatch(h))return game.away;
+    if(sideMatch(h) && !sideMatch(a))return game.home;
+  }
+
+  // Only compare against the two teams in the already-resolved game. Global team
+  // aliases are useful evidence, but they cannot introduce a third team here.
   const awayScore=importTeamTextScore(source,game.away);
   const homeScore=importTeamTextScore(source,game.home);
   if(awayScore>=60||homeScore>=60)return awayScore>=homeScore?game.away:game.home;
 
-  // If OCR polluted the wager header (for example "C 2 Missouri"), use the
-  // explicit matchup side as a second deterministic bridge to the canonical game.
-  const pair=extractImportMatchupPair(candidate.eventText||'');
+  // Tolerate light OCR pollution around an otherwise recognizable matchup side.
   if(pair){
     const raw=normalizeImportTeamText(source);
     const a=normalizeImportTeamText(pair.away),h=normalizeImportTeamText(pair.home);
