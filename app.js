@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0';
+const BUILD_VERSION = '3.0.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return 'Version 2'; }
@@ -2636,7 +2636,7 @@ function renderMarket(){
           <strong>${escapeAttr(k.date)}</strong>
           <span>${escapeAttr(k.time||'Time TBD')}</span>
         </div>
-        <div class="slate-tv">${renderTvNetworkLogo(g.tv||'')}</div>
+        <div class="slate-footer-right">${renderSlatePublicPick(g)}<div class="slate-tv">${renderTvNetworkLogo(g.tv||'')}</div></div>
       </div>
 
       ${renderSlateStatus(saved,caution,missing)}
@@ -3011,71 +3011,91 @@ async function openTeamScreen(teamName){
 }
 
 
-function latestPublicSpread(g){
+function publicBookLabel(bookmaker){
+  return bookmaker==='draftkings'?'DraftKings':bookmaker==='betmgm'?'BetMGM':bookmaker==='circa'?'Circa':bookmaker;
+}
+function publicSnapshotForGame(g,time=null){
   const rows=(state.publicBettingSnapshots||[]).filter(r=>r.game_id===g.id&&r.market==='spread');
   if(!rows.length)return null;
-  const latest=rows.reduce((m,r)=>!m||new Date(r.lumify_captured_at)>new Date(m)?r.lumify_captured_at:m,null);
-  const snap=rows.filter(r=>r.lumify_captured_at===latest);
+  const snapshotTime=time||rows.reduce((m,r)=>!m||new Date(r.lumify_captured_at)>new Date(m)?r.lumify_captured_at:m,null);
+  const snap=rows.filter(r=>r.lumify_captured_at===snapshotTime);
+  const required=['draftkings','betmgm','circa'];
   const byBook={};
   for(const r of snap){
+    if(!required.includes(r.bookmaker))continue;
     if(!byBook[r.bookmaker])byBook[r.bookmaker]={bookmaker:r.bookmaker};
     byBook[r.bookmaker][r.side]=r;
   }
-  const books=Object.values(byBook).filter(b=>b.home&&b.away);
-  if(books.length<2)return null;
-  const homeBets=books.map(b=>Number(b.home.bets_pct)).filter(Number.isFinite);
-  const awayBets=books.map(b=>Number(b.away.bets_pct)).filter(Number.isFinite);
-  if(homeBets.length<2||awayBets.length<2)return null;
-  const homeMajor=homeBets.every(v=>v>50), awayMajor=awayBets.every(v=>v>50);
-  if(!homeMajor&&!awayMajor)return {mixed:true,books,latest};
+  const books=required.map(k=>byBook[k]).filter(Boolean);
+  if(books.length!==3||books.some(b=>!b.home||!b.away))return {qualified:false,reason:'Three sportsbook ticket splits required',books,latest:snapshotTime};
+  const home=books.map(b=>Number(b.home.bets_pct));
+  const away=books.map(b=>Number(b.away.bets_pct));
+  if([...home,...away].some(v=>!Number.isFinite(v)||v===0||v===100))return {qualified:false,reason:'0% / 100% split excluded',books,latest:snapshotTime};
+  const homeMajor=home.every(v=>v>50), awayMajor=away.every(v=>v>50);
+  if(!homeMajor&&!awayMajor)return {qualified:false,reason:'Books disagree on public side',books,latest:snapshotTime};
   const side=homeMajor?'home':'away';
-  const team=side==='home'?g.home:g.away;
-  const bets=books.map(b=>Number(b[side]?.bets_pct)).filter(Number.isFinite);
-  const money=books.map(b=>Number(b[side]?.handle_pct)).filter(Number.isFinite);
-  const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;
-  return {mixed:false,side,team,bets:avg(bets),money:avg(money),books,latest};
+  const vals=side==='home'?home:away;
+  const mean=vals.reduce((a,b)=>a+b,0)/vals.length;
+  const sd=Math.sqrt(vals.reduce((sum,v)=>sum+Math.pow(v-mean,2),0)/vals.length);
+  if(sd>10)return {qualified:false,reason:'Sportsbook spread is too wide',side,team:side==='home'?g.home:g.away,bets:Math.round(mean),betsRaw:mean,sd,books,latest:snapshotTime};
+  if(mean<67)return {qualified:false,reason:'Public average below 67%',side,team:side==='home'?g.home:g.away,bets:Math.round(mean),betsRaw:mean,sd,books,latest:snapshotTime};
+  const moneyVals=['draftkings','circa'].map(k=>{
+    const b=byBook[k], v=Number(b?.[side]?.handle_pct);
+    return Number.isFinite(v)&&v!==0&&v!==100?v:null;
+  }).filter(v=>v!=null);
+  const money=moneyVals.length===2?Math.round(moneyVals.reduce((a,b)=>a+b,0)/2):null;
+  return {qualified:true,side,team:side==='home'?g.home:g.away,bets:Math.round(mean),betsRaw:mean,money,sd,books,latest:snapshotTime};
+}
+function latestPublicSpread(g){ return publicSnapshotForGame(g); }
+function publicPickRankings(){
+  return weekGames(state.selectedWeek).map(g=>({g,p:latestPublicSpread(g)})).filter(x=>x.p?.qualified).sort((a,b)=>b.p.betsRaw-a.p.betsRaw||a.p.sd-b.p.sd).map((x,i)=>({gameId:x.g.id,rank:i+1,...x.p}));
+}
+function publicPickForGame(g){
+  const p=latestPublicSpread(g); if(!p?.qualified)return null;
+  const ranked=publicPickRankings().find(x=>x.gameId===g.id);
+  return {...p,rank:ranked?.rank||null};
 }
 function renderPublicPickSticker(g,side){
-  const p=latestPublicSpread(g);
-  if(!p||p.mixed||p.side!==side)return '';
-  return `<div class="public-pick-sticker public-pick-${side}" aria-label="Public pick ${escapeAttr(p.team)} ${p.bets}% bets${p.money==null?'':`, ${p.money}% money`}">
-    <div class="public-sticker-starburst"><span class="public-sticker-kicker">PUBLIC PICK</span><strong>${p.bets}%</strong><span class="public-sticker-money">MONEY ${p.money==null?'—':`${p.money}%`}</span></div>
+  const p=publicPickForGame(g);
+  if(!p||p.side!==side)return '';
+  const rank=p.rank&&p.rank<=10?`<span class="public-sticker-rank">#${p.rank}</span>`:'';
+  return `<div class="public-pick-sticker public-pick-${side}" aria-label="${p.rank&&p.rank<=10?`Number ${p.rank} `:''}Public pick ${escapeAttr(p.team)} ${p.bets}% bets${p.money==null?'':`, ${p.money}% money`}">
+    <div class="public-sticker-starburst">${rank}<span class="public-sticker-kicker">PUBLIC PICK</span><strong>${p.bets}%</strong><span class="public-sticker-money">MONEY ${p.money==null?'—':`${p.money}%`}</span></div>
     <div class="public-sticker-ribbons"><i></i><i></i></div>
   </div>`;
 }
-function publicBettingSeries(g){
+function renderSlatePublicPick(g){
+  const p=publicPickForGame(g); if(!p)return '';
+  return `<span class="slate-public-pick">🏅 ${p.rank&&p.rank<=10?`#${p.rank} `:''}PUBLIC PICK · ${p.bets}%</span>`;
+}
+function publicBettingHistory(g){
   const rows=(state.publicBettingSnapshots||[]).filter(r=>r.game_id===g.id&&r.market==='spread');
   const times=[...new Set(rows.map(r=>r.lumify_captured_at))].sort((a,b)=>new Date(a)-new Date(b));
-  return times.map(time=>{
-    const snap=rows.filter(r=>r.lumify_captured_at===time);
-    const away=snap.filter(r=>r.side==='away'&&Number.isFinite(Number(r.bets_pct)));
-    const handles=snap.filter(r=>r.side==='away'&&Number.isFinite(Number(r.handle_pct)));
-    const avg=a=>a.length?a.reduce((n,r)=>n+Number(r.bets_pct??r.handle_pct),0)/a.length:null;
-    const bets=away.length?away.reduce((n,r)=>n+Number(r.bets_pct),0)/away.length:null;
-    const money=handles.length?handles.reduce((n,r)=>n+Number(r.handle_pct),0)/handles.length:null;
-    return {time,bets,money};
-  }).filter(p=>p.bets!=null);
+  return times.map(time=>publicSnapshotForGame(g,time)).filter(Boolean);
+}
+function publicSnapshotLabel(iso){
+  const d=new Date(iso); if(Number.isNaN(d.getTime()))return 'Snapshot';
+  return new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'numeric',minute:'2-digit'}).format(d);
 }
 function renderPublicBettingChart(){
   const g=gameById(state.activeGameId); if(!g)return '';
-  const points=publicBettingSeries(g), latest=latestPublicSpread(g);
-  const W=640,H=260,pad=42;
-  let svg='<div class="chart-empty">Not enough public-betting snapshots to graph yet.</div>';
-  if(points.length){
-    const x=i=>points.length===1?W/2:pad+i*(W-pad*2)/(points.length-1), y=v=>H-pad-(v/100)*(H-pad*2);
-    const path=key=>points.filter(p=>p[key]!=null).map((p,i)=>`${i?'L':'M'} ${x(i)} ${y(p[key])}`).join(' ');
-    svg=`<svg class="history-chart public-history-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Public betting history">
-      ${[0,25,50,75,100].map(v=>`<line class="chart-grid-line" x1="${pad}" y1="${y(v)}" x2="${W-pad}" y2="${y(v)}"></line><text class="chart-axis-text" x="7" y="${y(v)+4}">${v}%</text>`).join('')}
-      <path class="public-chart-bets" d="${path('bets')}"></path>${points.some(p=>p.money!=null)?`<path class="public-chart-money" d="${path('money')}"></path>`:''}
-      ${points.map((p,i)=>`<circle class="public-dot-bets" cx="${x(i)}" cy="${y(p.bets)}" r="4"></circle>${p.money==null?'':`<circle class="public-dot-money" cx="${x(i)}" cy="${y(p.money)}" r="4"></circle>`}`).join('')}
-    </svg>`;
-  }
+  const latest=latestPublicSpread(g);
   const books=latest?.books||[];
-  const side=latest&&!latest.mixed?latest.side:null;
+  const side=latest?.side||null;
+  const p=publicPickForGame(g);
+  const status=p?`<div class="public-qualified">✓ Public Pick Qualified${p.rank&&p.rank<=10?` · #${p.rank}`:''} · SD ${p.sd.toFixed(1)}</div>`:`<div class="public-not-qualified">Not currently qualified${latest?.reason?` · ${escapeAttr(latest.reason)}`:''}${Number.isFinite(latest?.sd)?` · SD ${latest.sd.toFixed(1)}`:''}</div>`;
+  const rows=books.map(b=>{
+    const r=side?b[side]:null;
+    return `<tr><td>${escapeAttr(publicBookLabel(b.bookmaker))}</td><td>${side?escapeAttr(side==='home'?g.home:g.away):'—'}</td><td>${r?.bets_pct==null?'—':`${r.bets_pct}%`}</td><td>${r?.handle_pct==null?'—':`${r.handle_pct}%`}</td></tr>`;
+  }).join('');
+  const trackRow=latest&&side?`<tr class="public-trackpicks-row"><td>TrackPicks</td><td>${escapeAttr(side==='home'?g.home:g.away)}</td><td>${latest.bets==null?'—':`${latest.bets}%`}</td><td>${latest.money==null?'—':`${latest.money}%`}</td></tr>`:'';
+  const history=publicBettingHistory(g).map(h=>`<tr><td>${escapeAttr(publicSnapshotLabel(h.latest))}</td><td>${h.side?escapeAttr(h.side==='home'?g.home:g.away):'—'}</td><td>${h.bets==null?'—':`${h.bets}%`}</td><td>${h.money==null?'—':`${h.money}%`}</td></tr>`).join('');
   return `<div class="overlay history-overlay"><section class="history-sheet public-history-sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">Public Betting</h2><div class="detail-meta">${escapeAttr(g.away)} @ ${escapeAttr(g.home)} · Spread</div></div><button class="icon-btn" data-close-history>✕</button></div>
-    <div class="public-chart-legend"><span><i class="legend-bets"></i>Public bets — ${escapeAttr(g.away)}</span><span><i class="legend-money"></i>Money — ${escapeAttr(g.away)}</span></div>${svg}
-    <div class="public-book-grid">${books.map(b=>{const r=side?b[side]:b.away;return `<div><span>${escapeAttr(b.bookmaker==='draftkings'?'DraftKings':b.bookmaker==='betmgm'?'BetMGM':'Circa')}</span><strong>${r?.bets_pct??'—'}% bets</strong><small>${r?.handle_pct==null?'Money unavailable':`${r.handle_pct}% money`}</small></div>`}).join('')}</div>
-    <div class="chart-note">Raw sportsbook snapshots collected by TrackPicks. The sticker only appears when at least two books agree on the public side.</div></section></div>`;
+    ${status}
+    <div class="public-table-wrap"><table class="public-betting-table"><thead><tr><th>Book</th><th>Public Side</th><th>Tickets</th><th>Money</th></tr></thead><tbody>${rows}${trackRow}</tbody></table></div>
+    <div class="public-history-heading"><strong>Collection History</strong><span>TrackPicks snapshots</span></div>
+    <div class="public-table-wrap"><table class="public-betting-table public-history-table"><thead><tr><th>Snapshot</th><th>Public Pick</th><th>Tickets</th><th>Money</th></tr></thead><tbody>${history||'<tr><td colspan="4">No history yet.</td></tr>'}</tbody></table></div>
+    <div class="chart-note">Qualification uses DraftKings, BetMGM and Circa ticket splits: all three required, 0/100 excluded, population SD ≤ 10, and public average ≥ 67%. TrackPicks money is the average of valid DraftKings and Circa handle percentages.</div></section></div>`;
 }
 
 function renderGameSheet(){
