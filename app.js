@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.2';
+const BUILD_VERSION = '2.9.3';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -1949,6 +1949,32 @@ function importTeamForms(teamName){
   return [...forms].sort((a,b)=>b.length-a.length);
 }
 
+function importOcrConfusablePhraseMatch(text,form){
+  // 2.9.3: OCR commonly reads an uppercase I as lowercase l ("Iowa" -> "lowa").
+  // Treat that as a strong match only when every other character in the phrase agrees.
+  // This is deliberately generic and phrase-scoped; it is not a BYU/Iowa exception.
+  const a=normalizeImportTeamText(text).split(' ').filter(Boolean);
+  const b=normalizeImportTeamText(form).split(' ').filter(Boolean);
+  if(!a.length||!b.length||a.length<b.length)return false;
+  const tokenMatch=(x,y)=>{
+    if(x===y)return true;
+    if(x.length!==y.length||x.length<2)return false;
+    let diffs=0;
+    for(let i=0;i<x.length;i++){
+      if(x[i]===y[i])continue;
+      if(i===0 && ((x[i]==='l'&&y[i]==='i')||(x[i]==='i'&&y[i]==='l'))){diffs++;continue;}
+      return false;
+    }
+    return diffs===1;
+  };
+  for(let start=0;start<=a.length-b.length;start++){
+    let ok=true;
+    for(let i=0;i<b.length;i++)if(!tokenMatch(a[start+i],b[i])){ok=false;break;}
+    if(ok)return true;
+  }
+  return false;
+}
+
 function importTeamTextScore(text,teamName){
   const t=normalizeImportTeamText(text);
   if(!t)return 0;
@@ -1960,6 +1986,7 @@ function importTeamTextScore(text,teamName){
     else if(t.startsWith(form+' ') && t.length-form.length<=12)best=Math.max(best,91);
     else if((` ${t} `).includes(` ${form} `))best=Math.max(best,88);
     else if(form.length>=4 && (` ${form} `).includes(` ${t} `))best=Math.max(best,78);
+    else if(form.length>=4 && importOcrConfusablePhraseMatch(t,form))best=Math.max(best,94);
   }
   return best;
 }
@@ -3171,7 +3198,7 @@ function parseScreenshotMultiLegTicket(){
   const stakeUsd=wagerMatches.length?Number(wagerMatches[wagerMatches.length-1][1].replace(/,/g,'')):null;
   const units=Number.isFinite(stakeUsd)&&Number(state.standardUnitSize)>0?stakeUsd/Number(state.standardUnitSize):null;
 
-  // 2.9.2 stitch diagnostics: preserve every OCR candidate long enough to explain why it did or did not enter stitching.
+  // 2.9.3 stitch diagnostics: preserve every OCR candidate long enough to explain why it did or did not enter stitching.
   const stitchDiagnostics={screenshots:[],connections:[],expectedLegs};
   const perImage=items.map((item,sourceIndex)=>{
     const raw=(item.candidates||[]);
