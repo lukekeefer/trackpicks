@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.4';
+const BUILD_VERSION = '2.9.5';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -1975,6 +1975,28 @@ function importOcrConfusablePhraseMatch(text,form){
   return false;
 }
 
+function importOcrSchoolPrefixMatch(text,form){
+  // 2.9.5: sportsbook event rows often use the school name while TrackPicks stores
+  // the full ESPN name including mascot ("Iowa State" vs "Iowa State Cyclones").
+  // Compare the OCR phrase against the leading canonical tokens and allow the same
+  // first-letter I/l OCR confusion handled by importOcrConfusablePhraseMatch.
+  const a=normalizeImportTeamText(text).split(' ').filter(Boolean);
+  const b=normalizeImportTeamText(form).split(' ').filter(Boolean);
+  if(a.length<2 || b.length<=a.length)return false;
+  const tokenMatch=(x,y)=>{
+    if(x===y)return true;
+    if(x.length!==y.length||x.length<2)return false;
+    let diffs=0;
+    for(let i=0;i<x.length;i++){
+      if(x[i]===y[i])continue;
+      if(i===0 && ((x[i]==='l'&&y[i]==='i')||(x[i]==='i'&&y[i]==='l'))){diffs++;continue;}
+      return false;
+    }
+    return diffs===1;
+  };
+  return a.every((token,i)=>tokenMatch(token,b[i]));
+}
+
 function importTeamTextScore(text,teamName){
   const t=normalizeImportTeamText(text);
   if(!t)return 0;
@@ -1985,8 +2007,9 @@ function importTeamTextScore(text,teamName){
     else if(t.endsWith(' '+form) && t.length-form.length<=4)best=Math.max(best,96); // OCR prefix artifact
     else if(t.startsWith(form+' ') && t.length-form.length<=12)best=Math.max(best,91);
     else if((` ${t} `).includes(` ${form} `))best=Math.max(best,88);
-    else if(form.length>=4 && (` ${form} `).includes(` ${t} `))best=Math.max(best,78);
     else if(form.length>=4 && importOcrConfusablePhraseMatch(t,form))best=Math.max(best,94);
+    else if(form.length>=4 && importOcrSchoolPrefixMatch(t,form))best=Math.max(best,94);
+    else if(form.length>=4 && (` ${form} `).includes(` ${t} `))best=Math.max(best,78);
   }
   return best;
 }
