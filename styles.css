@@ -1840,3 +1840,104 @@ html,body{min-height:100%;min-height:100dvh}
 @media(max-width:430px){
   .slip-header-import-btn{min-width:66px;height:38px;padding:0 11px;font-size:12px}
 }
+
+
+/* 3.0.4 — Public Pick hero awards + Full Slate collision cleanup */
+.reference-hero{
+  position:relative;
+  overflow:visible;
+  padding-top:20px!important;
+}
+.reference-hero .public-pick-sticker{display:none!important}
+.hero-public-sticker{
+  position:absolute;
+  z-index:8;
+  width:108px;
+  height:108px;
+  border:3px solid #8f6418;
+  border-radius:50%;
+  background:linear-gradient(145deg,#ffe99b 0%,#e5b94c 48%,#c98e20 100%);
+  box-shadow:
+    0 8px 18px rgba(17,24,39,.24),
+    inset 0 0 0 3px #fff0b6,
+    inset 0 0 0 6px #a9781e;
+  color:#4a3108;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  cursor:pointer;
+  font-family:inherit;
+  transform:rotate(-6deg);
+  clip-path:polygon(50% 0%,58% 7%,68% 3%,75% 14%,87% 13%,90% 26%,100% 32%,94% 44%,100% 55%,90% 63%,92% 76%,79% 80%,74% 92%,61% 88%,50% 100%,40% 88%,27% 92%,22% 80%,9% 77%,11% 64%,0 55%,6% 44%,0 32%,12% 27%,13% 14%,26% 15%,31% 4%,42% 8%);
+  text-shadow:0 1px rgba(255,255,255,.5);
+}
+.hero-public-sticker:hover{transform:rotate(-6deg) scale(1.03)}
+.hero-public-rank{
+  display:block;
+  font-size:24px;
+  line-height:.95;
+  font-weight:1000;
+}
+.hero-public-word{
+  display:block;
+  margin-top:5px;
+  font-size:9px;
+  line-height:1;
+  font-weight:1000;
+  letter-spacing:.075em;
+}
+.hero-public-sticker strong{
+  display:block;
+  margin-top:5px;
+  max-width:82px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  font-size:16px;
+  line-height:1;
+  font-weight:1000;
+}
+.hero-public-away{left:-12px;top:36px;transform:rotate(-8deg)}
+.hero-public-away:hover{transform:rotate(-8deg) scale(1.03)}
+.hero-public-home{right:-12px;top:36px;transform:rotate(8deg)}
+.hero-public-home:hover{transform:rotate(8deg) scale(1.03)}
+.hero-public-total{
+  left:50%;
+  top:24px;
+  transform:translateX(-50%) rotate(-3deg);
+}
+.hero-public-total:hover{transform:translateX(-50%) rotate(-3deg) scale(1.03)}
+.hero-public-total .hero-public-word{font-size:10px}
+.hero-public-total strong{font-size:18px}
+
+/* Full Slate gets one badge only; TV network permanently owns the far-right lane. */
+.slate-footer-right{
+  flex-wrap:nowrap!important;
+  flex:0 1 auto;
+  min-width:0;
+  gap:7px!important;
+}
+.slate-footer-right .slate-public-pick{
+  flex:0 1 auto;
+  max-width:155px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.slate-footer-right .slate-tv{
+  flex:0 0 auto;
+  margin-left:0!important;
+}
+
+@media(max-width:520px){
+  .reference-hero{padding-top:28px!important}
+  .hero-public-sticker{width:96px;height:96px}
+  .hero-public-rank{font-size:22px}
+  .hero-public-word{font-size:8px}
+  .hero-public-sticker strong{font-size:15px;max-width:72px}
+  .hero-public-away{left:-8px;top:42px}
+  .hero-public-home{right:-8px;top:42px}
+  .hero-public-total{top:18px}
+  .hero-public-total strong{font-size:17px}
+  .slate-footer-right .slate-public-pick{max-width:136px;font-size:8px;padding:3px 5px}
+}

@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.3';
+const BUILD_VERSION = '3.0.4';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3069,16 +3069,23 @@ function publicPickRankings(){
 function publicPicksForGame(g){return publicPickRankings().filter(x=>x.gameId===g.id);}
 function publicPickForMarket(g,market){return publicPicksForGame(g).find(x=>x.market===market)||null;}
 function publicPickForGame(g){return publicPicksForGame(g)[0]||null;}
-function renderWagerPublicBadge(g,market,selection){
-  const p=publicPickForMarket(g,market); if(!p)return '';
-  const matches=market==='total'?selection.toLowerCase()===p.side:(selection===p.team);
-  if(!matches)return '';
-  const label=p.rank<=10?`#${p.rank} PUBLIC PICK`:'PUBLIC PICK';
-  return `<button type="button" class="wager-public-badge" data-public-pick-detail="${market}" aria-label="Open ${escapeAttr(label)} details">${label}</button>`;
-}
+function renderWagerPublicBadge(){ return ''; }
 function renderSlatePublicPick(g){
-  const picks=publicPicksForGame(g); if(!picks.length)return '';
-  return picks.map(p=>`<span class="slate-public-pick">🏅 ${p.rank<=10?`#${p.rank} `:''}PUBLIC PICK · ${p.bets}%</span>`).join('');
+  const p=publicPickForGame(g); if(!p)return '';
+  return `<span class="slate-public-pick">🏅 ${p.rank<=10?`#${p.rank} `:''}PUBLIC PICK · ${p.bets}%</span>`;
+}
+function renderHeroPublicPickStickers(g){
+  const picks=publicPicksForGame(g);
+  return picks.map(p=>{
+    const rank=p.rank<=10?`#${p.rank}`:'★';
+    if(p.market==='total'){
+      const side=p.side==='over'?'OVER':'UNDER';
+      return `<button type="button" class="hero-public-sticker hero-public-total" data-public-pick-detail="total" aria-label="Open ${escapeAttr(rank)} Public ${side} details"><span class="hero-public-rank">${rank}</span><span class="hero-public-word">PUBLIC</span><strong>${side}</strong></button>`;
+    }
+    const isAway=p.team===g.away;
+    const teamAbbr=teamMetaFor(p.team)?.abbreviation||teamMonogram(p.team);
+    return `<button type="button" class="hero-public-sticker hero-public-spread ${isAway?'hero-public-away':'hero-public-home'}" data-public-pick-detail="spread" aria-label="Open ${escapeAttr(rank)} Public Pick ${escapeAttr(teamAbbr)} details"><span class="hero-public-rank">${rank}</span><span class="hero-public-word">PUBLIC PICK</span><strong>${escapeAttr(teamAbbr)}</strong></button>`;
+  }).join('');
 }
 function publicBettingHistory(g,market){
   const rows=(state.publicBettingSnapshots||[]).filter(r=>r.game_id===g.id&&r.market===market);
@@ -3142,6 +3149,7 @@ function renderGameSheet(){
       <div class="game-page-scroll">
 
       <section class="matchup-hero reference-hero">
+        ${renderHeroPublicPickStickers(g)}
         <div class="matchup-team">
           <button type="button" class="matchup-logo-button" data-open-team="${escapeAttr(g.away)}" aria-label="Open ${escapeAttr(g.away)} team page">${renderTeamLogo(g.away)}</button>
           <div class="matchup-team-name">${escapeAttr(g.away)}</div>
@@ -3425,6 +3433,8 @@ ${escapeAttr((d.trace.topGames||[]).join('\n')||'none')}</pre></div>`).join('')}
     <div class="screenshot-import-top"><button type="button" class="settings-back-btn" data-close-screenshot-import aria-label="Back">‹</button><div class="settings-page-title">Import Screenshots</div><span class="settings-page-top-spacer"></span></div>
     <div class="screenshot-import-scroll">
       <div class="screenshot-import-summary"><div><strong>Week ${importWeek} import · ${files.length} screenshot${files.length===1?'':'s'}</strong><span>${totalCandidates?`${totalCandidates} wager candidate${totalCandidates===1?'':'s'} detected · Week ${importWeek} only`:`Bulk review queue · Week ${importWeek} only`}</span></div><div class="unit-size-chip ${unitSet?'ready':'missing'}"><span>Standard unit</span><strong>${unitSet?formatUsd(state.standardUnitSize):'Not set'}</strong></div></div>
+      <button type="button" class="secondary full-width" data-import-help>How to Import Picks</button>
+      ${state.screenshotImportHelp?`<div class="parsed-bet-card" style="margin-top:10px"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><strong>How to Import Picks</strong><button type="button" class="secondary" data-close-import-help>Close</button></div><div style="margin-top:10px;line-height:1.5"><strong>Current week only.</strong> Only import bets for the Slip week you are working on.<br><br><strong>Singles:</strong> Upload all single bets together as one batch.<br><br><strong>Parlays & teasers:</strong> Upload each multi-leg bet as its own separate batch. If one bet spans multiple screenshots, include all of those screenshots together.<br><br><strong>Long parlays:</strong> Keep at least one repeated leg visible between consecutive screenshots. TrackPicks uses those repeated legs to order and stitch the ticket.<br><br>After you confirm a batch, TrackPicks clears it automatically so the importer is ready for the next bet.</div></div>`:''}
       ${!unitSet?`<div class="screenshot-import-warning"><strong>Set your standard unit size first.</strong><span>The importer will use wager amount ÷ standard unit size to prefill Units.</span><button type="button" class="secondary" data-import-open-settings>Open Settings</button></div>`:''}
       ${state.screenshotImportMessage?`<div class="auth-message error">${escapeAttr(state.screenshotImportMessage)}</div>`:''}
       <div class="screenshot-import-actions">${files.length?`<button type="button" class="primary" data-process-screenshots ${state.screenshotImportProcessing?'disabled':''}>${state.screenshotImportProcessing?'Processing Screenshots…':(totalCandidates?'Process Remaining Screenshots':'Process Screenshots')}</button>`:''}<button type="button" class="${files.length?'secondary':'primary'}" data-add-screenshots ${state.screenshotImportProcessing?'disabled':''}>${files.length?'Add More Screenshots':'Choose Screenshots'}</button>${files.length?'<button type="button" class="secondary full-width" data-clear-screenshot-batch '+(state.screenshotImportProcessing?'disabled':'')+'>Clear Batch</button>':''}<input type="file" data-screenshot-import-file accept="image/*" multiple hidden></div>
@@ -3639,6 +3649,8 @@ function bind(){
   document.querySelectorAll('[data-open-screenshot-import]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-file-input]')?.click());
   document.querySelectorAll('[data-screenshot-file-input]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-close-screenshot-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=false;render();});
+  document.querySelectorAll('[data-import-help]').forEach(el=>el.onclick=()=>{state.screenshotImportHelp=true;render();});
+  document.querySelectorAll('[data-close-import-help]').forEach(el=>el.onclick=()=>{state.screenshotImportHelp=false;render();});
   document.querySelectorAll('[data-add-screenshots]').forEach(el=>el.onclick=()=>document.querySelector('[data-screenshot-import-file]')?.click());
   document.querySelectorAll('[data-screenshot-import-file]').forEach(el=>el.onchange=async()=>{const files=[...(el.files||[])];el.value='';await queueScreenshotFiles(files);});
   document.querySelectorAll('[data-process-screenshots]').forEach(el=>el.onclick=processScreenshotBatch);
