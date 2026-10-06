@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.3';
+const BUILD_VERSION = '2.9.4';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -2102,6 +2102,39 @@ function bestImportGameMatch(candidate,games){
   return confident?best:null;
 }
 
+function buildImportReconciliationDiagnostic(candidate,activeWeek){
+  const pair=extractImportMatchupPair(candidate?.eventText||'');
+  const games=weekGames(Number(activeWeek));
+  const tested=games.map(game=>{
+    const pairAway=pair?importTeamTextScore(pair.away,game.away):0;
+    const pairHome=pair?importTeamTextScore(pair.home,game.home):0;
+    const selAway=importTeamTextScore(candidate?.selection||'',game.away);
+    const selHome=importTeamTextScore(candidate?.selection||'',game.home);
+    const direct=directImportMatchupForGame(candidate,game);
+    const scored=scoreImportCandidateForGame(candidate,game);
+    return {
+      gameId:game.id,away:game.away,home:game.home,
+      pairAway,pairHome,selAway,selHome,
+      directScore:direct?.score||0,normalScore:scored?.score||0,
+      selectionTeam:direct?.selectionTeam||scored?.selectionTeam||''
+    };
+  }).sort((a,b)=>Math.max(b.directScore,b.normalScore,b.pairAway+b.pairHome)-Math.max(a.directScore,a.normalScore,a.pairAway+a.pairHome)).slice(0,5);
+  const bestDirect=tested.reduce((m,x)=>Math.max(m,x.directScore),0);
+  const bestNormal=tested.reduce((m,x)=>Math.max(m,x.normalScore),0);
+  let reason='No Week '+activeWeek+' game met the reconciliation threshold.';
+  if(pair && tested.length){
+    const top=tested[0];
+    if(top.pairAway<78||top.pairHome<78)reason=`Explicit matchup failed side threshold (away ${top.pairAway}/78, home ${top.pairHome}/78).`;
+    else if(!bestDirect)reason='Explicit matchup sides looked plausible but direct matchup resolution did not produce a unique match.';
+  }
+  return {
+    parsedAway:pair?.away||'',parsedHome:pair?.home||'',
+    normalizedAway:pair?normalizeImportTeamText(pair.away):'',normalizedHome:pair?normalizeImportTeamText(pair.home):'',
+    selection:candidate?.selection||'',normalizedSelection:normalizeImportTeamText(candidate?.selection||''),
+    activeWeek:Number(activeWeek),bestDirect,bestNormal,reason,tested
+  };
+}
+
 function canonicalImportSelectionForMatchedGame(candidate,game){
   if(!candidate||!game||candidate.betType==='Total')return candidate?.selection||'';
   const source=[candidate.rawSelection,candidate.selection].filter(Boolean).join(' ');
@@ -2349,6 +2382,8 @@ function matchScreenshotCandidateToWeek(candidate,week){
     candidate.detectedWeek=null;
     candidate.reviewState='Needs game match';
     candidate.matchStatus='unmatched';
+    // 2.9.4: retain the exact reconciliation decision path for diagnostics.
+    candidate.reconciliationDiagnostic=buildImportReconciliationDiagnostic(candidate,activeWeek);
   }
   return finalizeScreenshotCandidateReadiness(candidate);
 }
@@ -3214,6 +3249,7 @@ function parseScreenshotMultiLegTicket(){
       matchedAway:c.matchedAway||'',
       matchedHome:c.matchedHome||'',
       matchedSelection:c.matchedSelection||'',
+      reconciliationDiagnostic:c.reconciliationDiagnostic||null,
       decision:c.matchStatus==='matched'?'ELIGIBLE FOR STITCH':`EXCLUDED BEFORE STITCH — matchStatus=${c.matchStatus||'unknown'}`
     }));
     stitchDiagnostics.screenshots.push({sourceIndex,rawCount:raw.length,eligibleCount:rows.filter(r=>r.matchStatus==='matched').length,candidates:rows});
@@ -3458,7 +3494,7 @@ function renderScreenshotImportFlow(){
     const t=f.multiLeg; const kind=t.isTeaser?'teaser':'parlay';
     const status=t.complete?`All ${t.expectedLegs} unique legs found`:`Found ${t.legs.length} of ${t.expectedLegs} unique legs`;
     const d=t.stitchDiagnostics;
-    const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br><span>Decision: ${escapeAttr(r.decision)}</span></div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
+    const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br><span>Decision: ${escapeAttr(r.decision)}</span>${r.reconciliationDiagnostic?`<details style="margin-top:6px"><summary>Reconciliation trace</summary><div style="margin-top:6px;font-size:12px;line-height:1.45"><strong>Parsed matchup:</strong> ${escapeAttr(r.reconciliationDiagnostic.parsedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.parsedHome||'—')}<br><strong>Normalized:</strong> ${escapeAttr(r.reconciliationDiagnostic.normalizedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.normalizedHome||'—')}<br><strong>Selection:</strong> ${escapeAttr(r.reconciliationDiagnostic.selection||'—')} → ${escapeAttr(r.reconciliationDiagnostic.normalizedSelection||'—')}<br><strong>Reason:</strong> ${escapeAttr(r.reconciliationDiagnostic.reason||'—')}<br><strong>Top Week ${escapeAttr(String(r.reconciliationDiagnostic.activeWeek))} comparisons:</strong>${(r.reconciliationDiagnostic.tested||[]).map((t,ti)=>`<br>${ti+1}. ${escapeAttr(t.away)} @ ${escapeAttr(t.home)} · pair ${t.pairAway}/${t.pairHome} · selection ${t.selAway}/${t.selHome} · direct ${t.directScore} · normal ${t.normalScore}`).join('')}</div></details>`:''}</div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
     const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} overlap connection${t.overlapCount===1?'':'s'} verified across ${t.screenshotCount} screenshots.`:'Single screenshot ticket.'}</div><div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card"><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div>`).join('')}</div><div class="parsed-bet-card"><strong>${t.expectedLegs}-leg ${escapeAttr(kind)}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>${diag}`;
     return shell('Stitched Multi-Leg Bet',body,`<button class="primary" data-load-stitched-parlay ${!t.complete?'disabled':''}>Load ${t.expectedLegs}-Leg ${t.isTeaser?'Teaser':'Parlay'} into Slip</button><button class="secondary" data-cancel-import-flow>Back to Screenshots</button>`);
   }
