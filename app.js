@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.11';
+const BUILD_VERSION = '2.9.12';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -2336,6 +2336,9 @@ function recoverDraftKingsSettledMatchup(candidate){
 }
 function normalizeCandidateAgainstKnownGames(candidate){
   if(!candidate)return candidate;
+  candidate._selectionTrace=candidate._selectionTrace||{};
+  candidate._selectionTrace.rawSelection=String(candidate.rawSelection||'');
+  candidate._selectionTrace.beforeNormalize=String(candidate.selection||'');
   // Keep the sportsbook's original selection text permanently. Reconciliation
   // may canonicalize candidate.selection, but rawSelection remains authoritative
   // for resolving specific names such as "Ohio State" vs "Ohio".
@@ -2347,6 +2350,7 @@ function normalizeCandidateAgainstKnownGames(candidate){
     const best=selectionClues[0];
     if(best.score>=88 && (!selectionClues[1] || best.score-selectionClues[1].score>=4)) candidate.selection=best.team;
   }
+  candidate._selectionTrace.afterNormalize=String(candidate.selection||'');
   // Recover a clean event from any two-team context inside the same wager card.
   if((!candidate.eventText || extractImportTeamClues(candidate.eventText).length<2) && clues.length>=2){
     const keys=new Set(clues.slice(0,6).map(x=>normalizeTeamName(x.team)));
@@ -2392,7 +2396,10 @@ function finalizeScreenshotCandidateReadiness(candidate){
 }
 
 function matchScreenshotCandidateToWeek(candidate,week){
+  candidate._selectionTrace=candidate._selectionTrace||{};
+  candidate._selectionTrace.matchEntry=String(candidate.selection||'');
   candidate=normalizeCandidateAgainstKnownGames(candidate);
+  candidate._selectionTrace.afterNormalizeForMatch=String(candidate.selection||'');
   const activeWeek=Number(week);
 
   // 2.5.4.14 collapsed-row timestamp guard. A collapsed wager can never be
@@ -2418,9 +2425,14 @@ function matchScreenshotCandidateToWeek(candidate,week){
     candidate.matchedWeek=activeWeek;
     candidate.matchedAway=inWeek.game.away;
     candidate.matchedHome=inWeek.game.home;
+    candidate._selectionTrace.beforeMatchedGameCanonical=String(candidate.selection||'');
+    candidate._selectionTrace.rawAtMatchedGameCanonical=String(candidate.rawSelection||'');
     const canonicalSelected=candidate.betType==='Total'?candidate.selection:(canonicalImportSelectionForMatchedGame(candidate,inWeek.game)||inWeek.selectionTeam||candidate.dkRecoveredSelection);
+    candidate._selectionTrace.canonicalResult=String(canonicalSelected||'');
     if(candidate.betType!=='Total'&&canonicalSelected)candidate.selection=canonicalSelected;
     candidate.matchedSelection=canonicalSelected||candidate.selection;
+    candidate._selectionTrace.afterMatchedGameCanonical=String(candidate.selection||'');
+    candidate._selectionTrace.matchedSelection=String(candidate.matchedSelection||'');
     candidate.reviewState=`Matched Week ${activeWeek}`;
     candidate.matchStatus='matched';
     return finalizeScreenshotCandidateReadiness(candidate);
@@ -3342,6 +3354,9 @@ function parseScreenshotMultiLegTicket(){
       matchedAway:c.matchedAway||'',
       matchedHome:c.matchedHome||'',
       matchedSelection:c.matchedSelection||'',
+      rawSelection:c.rawSelection||'',
+      currentSelection:c.selection||'',
+      selectionTrace:c._selectionTrace||null,
       reconciliationDiagnostic:c.reconciliationDiagnostic||null,
       decision:c.matchStatus==='matched'?'ELIGIBLE FOR STITCH':`EXCLUDED BEFORE STITCH — matchStatus=${c.matchStatus||'unknown'}`
     }));
@@ -3688,7 +3703,7 @@ function renderScreenshotImportFlow(){
     const d=t.stitchDiagnostics;
     const orderDiag=d?.order?`<div class="parsed-bet-card"><strong>Screenshot order</strong><div style="margin-top:6px">${d.order.autoReordered?`Auto-reordered: ${d.order.resolved.map(i=>`Screenshot ${i+1}`).join(' → ')}`:`Upload order already correct: ${d.order.resolved.map(i=>`Screenshot ${i+1}`).join(' → ')}`}</div></div>`:'';
     const metadataDiag=d?.metadata?`<div class="parsed-bet-card"><strong>Bet metadata</strong><div style="margin-top:6px">Payout odds: ${d.metadata.odds==null?'Needs header':escapeAttr(signed(d.metadata.odds))}${d.metadata.oddsSource!=null?` · Screenshot ${d.metadata.oddsSource+1} header`:''}<br>Wager: ${d.metadata.stakeUsd==null?'Needs review':escapeAttr(formatUsd(d.metadata.stakeUsd))}${d.metadata.stakeSource!=null?` · Screenshot ${d.metadata.stakeSource+1} footer`:''}<br>Total payout: ${d.metadata.totalPayoutUsd==null?'Not detected':escapeAttr(formatUsd(d.metadata.totalPayoutUsd))}${d.metadata.payoutSource!=null?` · Screenshot ${d.metadata.payoutSource+1} footer`:''}</div></div>`:'';
-    const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${orderDiag}${metadataDiag}${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br><span>Decision: ${escapeAttr(r.decision)}</span>${r.reconciliationDiagnostic?`<details style="margin-top:6px"><summary>Reconciliation trace</summary><div style="margin-top:6px;font-size:12px;line-height:1.45"><strong>Parsed matchup:</strong> ${escapeAttr(r.reconciliationDiagnostic.parsedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.parsedHome||'—')}<br><strong>Normalized:</strong> ${escapeAttr(r.reconciliationDiagnostic.normalizedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.normalizedHome||'—')}<br><strong>Selection:</strong> ${escapeAttr(r.reconciliationDiagnostic.selection||'—')} → ${escapeAttr(r.reconciliationDiagnostic.normalizedSelection||'—')}<br><strong>Reason:</strong> ${escapeAttr(r.reconciliationDiagnostic.reason||'—')}<br><strong>Top Week ${escapeAttr(String(r.reconciliationDiagnostic.activeWeek))} comparisons:</strong>${(r.reconciliationDiagnostic.tested||[]).map((t,ti)=>`<br>${ti+1}. ${escapeAttr(t.away)} @ ${escapeAttr(t.home)} · pair ${t.pairAway}/${t.pairHome} · selection ${t.selAway}/${t.selHome} · direct ${t.directScore} · normal ${t.normalScore}`).join('')}</div></details>`:''}</div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
+    const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${orderDiag}${metadataDiag}${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br>${r.selectionTrace?`<span><strong>Selection lifecycle:</strong> raw ${escapeAttr(r.selectionTrace.rawSelection||r.rawSelection||'—')} → match entry ${escapeAttr(r.selectionTrace.matchEntry||'—')} → normalized ${escapeAttr(r.selectionTrace.afterNormalizeForMatch||r.selectionTrace.afterNormalize||'—')} → pre-game ${escapeAttr(r.selectionTrace.beforeMatchedGameCanonical||'—')} → canonical result ${escapeAttr(r.selectionTrace.canonicalResult||'—')} → final ${escapeAttr(r.selectionTrace.afterMatchedGameCanonical||r.currentSelection||'—')} · matchedSelection ${escapeAttr(r.selectionTrace.matchedSelection||r.matchedSelection||'—')}</span><br>`:''}<span>Decision: ${escapeAttr(r.decision)}</span>${r.reconciliationDiagnostic?`<details style="margin-top:6px"><summary>Reconciliation trace</summary><div style="margin-top:6px;font-size:12px;line-height:1.45"><strong>Parsed matchup:</strong> ${escapeAttr(r.reconciliationDiagnostic.parsedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.parsedHome||'—')}<br><strong>Normalized:</strong> ${escapeAttr(r.reconciliationDiagnostic.normalizedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.normalizedHome||'—')}<br><strong>Selection:</strong> ${escapeAttr(r.reconciliationDiagnostic.selection||'—')} → ${escapeAttr(r.reconciliationDiagnostic.normalizedSelection||'—')}<br><strong>Reason:</strong> ${escapeAttr(r.reconciliationDiagnostic.reason||'—')}<br><strong>Top Week ${escapeAttr(String(r.reconciliationDiagnostic.activeWeek))} comparisons:</strong>${(r.reconciliationDiagnostic.tested||[]).map((t,ti)=>`<br>${ti+1}. ${escapeAttr(t.away)} @ ${escapeAttr(t.home)} · pair ${t.pairAway}/${t.pairHome} · selection ${t.selAway}/${t.selHome} · direct ${t.directScore} · normal ${t.normalScore}`).join('')}</div></details>`:''}</div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
     const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} overlap connection${t.overlapCount===1?'':'s'} verified across ${t.screenshotCount} screenshots.`:'Single screenshot ticket.'}</div><div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card"><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div>`).join('')}</div><div class="parsed-bet-card"><strong>${t.expectedLegs}-leg ${escapeAttr(kind)}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>${diag}`;
     return shell('Stitched Multi-Leg Bet',body,`<button class="primary" data-load-stitched-parlay ${!t.complete?'disabled':''}>Load ${t.expectedLegs}-Leg ${t.isTeaser?'Teaser':'Parlay'} into Slip</button><button class="secondary" data-cancel-import-flow>Back to Screenshots</button>`);
   }
