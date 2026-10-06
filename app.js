@@ -1,4 +1,4 @@
-const BUILD_VERSION = '2.9.6';
+const BUILD_VERSION = '2.9.7';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3351,27 +3351,61 @@ function parseScreenshotMultiLegTicket(){
     return best;
   };
 
-  let stitched=perImage[0]?[...perImage[0]]:[];
+  // 2.9.7: uploaded file order is not ticket order. Build the strongest directed
+  // overlap chain first, then feed that order into the already-proven stitcher.
+  const findScreenshotOrder=()=>{
+    if(perImage.length<=1)return {order:[0],score:0};
+    const attempts=[];
+    for(let start=0;start<perImage.length;start++){
+      const order=[start],unused=new Set(perImage.map((_,i)=>i).filter(i=>i!==start));
+      let score=0,valid=true;
+      while(unused.size){
+        const from=order[order.length-1];
+        const options=[...unused].map(to=>({to,hit:findBoundaryOverlap(perImage[from],perImage[to])})).filter(x=>x.hit).sort((a,b)=>b.hit.score-a.hit.score);
+        if(!options.length){valid=false;break;}
+        // If two different next screenshots are exactly tied, do not guess.
+        if(options.length>1&&options[0].hit.score===options[1].hit.score){valid=false;break;}
+        const best=options[0];order.push(best.to);unused.delete(best.to);score+=best.hit.score;
+      }
+      if(valid)attempts.push({order,score});
+    }
+    attempts.sort((a,b)=>b.score-a.score);
+    if(!attempts.length)return null;
+    if(attempts.length>1&&attempts[0].score===attempts[1].score&&attempts[0].order.join(',')!==attempts[1].order.join(','))return null;
+    return attempts[0];
+  };
+  const ordered=findScreenshotOrder();
+  if(!ordered){
+    return {error:'Could not confidently determine the screenshot order. Keep at least one repeated wager leg between consecutive screenshots.',expectedLegs,isTeaser};
+  }
+  const screenshotOrder=ordered.order;
+  stitchDiagnostics.order={
+    uploaded:perImage.map((_,i)=>i),
+    resolved:screenshotOrder,
+    autoReordered:screenshotOrder.some((x,i)=>x!==i),
+    score:ordered.score
+  };
+  let stitched=perImage[screenshotOrder[0]]?[...perImage[screenshotOrder[0]]]:[];
   let overlapCount=0;
-  for(let i=1;i<perImage.length;i++){
-    const next=perImage[i];
+  for(let oi=1;oi<screenshotOrder.length;oi++){
+    const prevSource=screenshotOrder[oi-1], nextSource=screenshotOrder[oi];
+    const next=perImage[nextSource];
     const hit=findBoundaryOverlap(stitched,next);
     if(!hit){
       return {error:'Could not confidently connect these multi-leg screenshots. Retake them with at least one wager leg visible in both consecutive screenshots.',expectedLegs,isTeaser};
     }
     overlapCount++;
-    // Record the exact anchor decision so QA can see what connected the screenshots.
+    // Record original upload positions even when TrackPicks auto-reorders the batch.
     const anchorLeft=hit.leftStart+hit.count-1, anchorRight=hit.rightStart+hit.count-1;
     stitchDiagnostics.connections.push({
-      fromScreenshot:i,
-      toScreenshot:i+1,
+      fromScreenshot:prevSource+1,
+      toScreenshot:nextSource+1,
       count:hit.count,
       score:hit.score,
       leftLabel:importCandidateLabel(stitched[anchorLeft]),
       rightLabel:importCandidateLabel(next[anchorRight]),
       decision:'MERGE OVERLAP'
     });
-    // Merge the anchor evidence, then append only candidates after the matched anchor/sequence.
     stitched[anchorLeft]=mergeLeg(stitched[anchorLeft],next[anchorRight]);
     for(let j=anchorRight+1;j<next.length;j++){
       const duplicateIndex=stitched.findIndex(x=>isSameLeg(x,next[j]));
@@ -3412,7 +3446,14 @@ function loadStitchedScreenshotParlay(){
   state.parlayDraft.odds=String(t.odds>0?`+${t.odds}`:t.odds);
   state.parlayDraft.isTeaser=!!t.isTeaser;
   state.parlayDraft.teaserPoints=t.isTeaser?(Number(t.teaserPoints)||6):6;
-  state.screenshotImportFlow=null; state.showScreenshotImporter=false; state.view='slip'; state.slipTab='parlays'; render();
+  // 2.9.7: confirmation completes the batch. Clear its source screenshots so the
+  // next import always starts from an empty, unambiguous batch.
+  state.screenshotImportFlow=null;
+  state.screenshotImportFiles=[];
+  state.screenshotImportWeek=null;
+  state.screenshotImportMessage='';
+  state.screenshotImportProcessing=false;
+  state.showScreenshotImporter=false; state.view='slip'; state.slipTab='parlays'; render();
 }
 function existingSlipDuplicate(c){
   if(c.matchStatus!=='matched'||!c.matchedGameId)return null;
@@ -3541,8 +3582,9 @@ function renderScreenshotImportFlow(){
     const t=f.multiLeg; const kind=t.isTeaser?'teaser':'parlay';
     const status=t.complete?`All ${t.expectedLegs} unique legs found`:`Found ${t.legs.length} of ${t.expectedLegs} unique legs`;
     const d=t.stitchDiagnostics;
+    const orderDiag=d?.order?`<div class="parsed-bet-card"><strong>Screenshot order</strong><div style="margin-top:6px">${d.order.autoReordered?`Auto-reordered: ${d.order.resolved.map(i=>`Screenshot ${i+1}`).join(' → ')}`:`Upload order already correct: ${d.order.resolved.map(i=>`Screenshot ${i+1}`).join(' → ')}`}</div></div>`:'';
     const metadataDiag=d?.metadata?`<div class="parsed-bet-card"><strong>Bet metadata</strong><div style="margin-top:6px">Payout odds: ${d.metadata.odds==null?'Needs header':escapeAttr(signed(d.metadata.odds))}${d.metadata.oddsSource!=null?` · Screenshot ${d.metadata.oddsSource+1} header`:''}<br>Wager: ${d.metadata.stakeUsd==null?'Needs review':escapeAttr(formatUsd(d.metadata.stakeUsd))}${d.metadata.stakeSource!=null?` · Screenshot ${d.metadata.stakeSource+1} footer`:''}<br>Total payout: ${d.metadata.totalPayoutUsd==null?'Not detected':escapeAttr(formatUsd(d.metadata.totalPayoutUsd))}${d.metadata.payoutSource!=null?` · Screenshot ${d.metadata.payoutSource+1} footer`:''}</div></div>`:'';
-    const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${metadataDiag}${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br><span>Decision: ${escapeAttr(r.decision)}</span>${r.reconciliationDiagnostic?`<details style="margin-top:6px"><summary>Reconciliation trace</summary><div style="margin-top:6px;font-size:12px;line-height:1.45"><strong>Parsed matchup:</strong> ${escapeAttr(r.reconciliationDiagnostic.parsedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.parsedHome||'—')}<br><strong>Normalized:</strong> ${escapeAttr(r.reconciliationDiagnostic.normalizedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.normalizedHome||'—')}<br><strong>Selection:</strong> ${escapeAttr(r.reconciliationDiagnostic.selection||'—')} → ${escapeAttr(r.reconciliationDiagnostic.normalizedSelection||'—')}<br><strong>Reason:</strong> ${escapeAttr(r.reconciliationDiagnostic.reason||'—')}<br><strong>Top Week ${escapeAttr(String(r.reconciliationDiagnostic.activeWeek))} comparisons:</strong>${(r.reconciliationDiagnostic.tested||[]).map((t,ti)=>`<br>${ti+1}. ${escapeAttr(t.away)} @ ${escapeAttr(t.home)} · pair ${t.pairAway}/${t.pairHome} · selection ${t.selAway}/${t.selHome} · direct ${t.directScore} · normal ${t.normalScore}`).join('')}</div></details>`:''}</div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
+    const diag=d?`<details class="parser-diagnostics" style="margin-top:14px"><summary><strong>Stitch Diagnostics</strong> · ${escapeAttr(d.summary||'')}</summary><div style="margin-top:10px;display:grid;gap:10px">${orderDiag}${metadataDiag}${d.screenshots.map(s=>`<div class="parsed-bet-card"><strong>Screenshot ${s.sourceIndex+1}: ${s.rawCount} raw · ${s.eligibleCount} eligible</strong>${s.candidates.map((r,i)=>`<div style="margin-top:8px"><strong>#${i+1} ${escapeAttr(r.label)}</strong><br><span>OCR/event: ${escapeAttr(r.eventText||'—')}</span><br><span>Match: ${escapeAttr(r.matchStatus)}${r.matchedAway||r.matchedHome?` · ${escapeAttr(r.matchedAway)} @ ${escapeAttr(r.matchedHome)}`:''}</span><br><span>Decision: ${escapeAttr(r.decision)}</span>${r.reconciliationDiagnostic?`<details style="margin-top:6px"><summary>Reconciliation trace</summary><div style="margin-top:6px;font-size:12px;line-height:1.45"><strong>Parsed matchup:</strong> ${escapeAttr(r.reconciliationDiagnostic.parsedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.parsedHome||'—')}<br><strong>Normalized:</strong> ${escapeAttr(r.reconciliationDiagnostic.normalizedAway||'—')} @ ${escapeAttr(r.reconciliationDiagnostic.normalizedHome||'—')}<br><strong>Selection:</strong> ${escapeAttr(r.reconciliationDiagnostic.selection||'—')} → ${escapeAttr(r.reconciliationDiagnostic.normalizedSelection||'—')}<br><strong>Reason:</strong> ${escapeAttr(r.reconciliationDiagnostic.reason||'—')}<br><strong>Top Week ${escapeAttr(String(r.reconciliationDiagnostic.activeWeek))} comparisons:</strong>${(r.reconciliationDiagnostic.tested||[]).map((t,ti)=>`<br>${ti+1}. ${escapeAttr(t.away)} @ ${escapeAttr(t.home)} · pair ${t.pairAway}/${t.pairHome} · selection ${t.selAway}/${t.selHome} · direct ${t.directScore} · normal ${t.normalScore}`).join('')}</div></details>`:''}</div>`).join('')}</div>`).join('')}${d.connections.length?`<div class="parsed-bet-card"><strong>Overlap decisions</strong>${d.connections.map(c=>`<div style="margin-top:8px">Screenshot ${c.fromScreenshot} → ${c.toScreenshot}: ${escapeAttr(c.leftLabel)} ↔ ${escapeAttr(c.rightLabel)}<br>Decision: ${escapeAttr(c.decision)} · score ${escapeAttr(String(c.score))}</div>`).join('')}</div>`:''}<div class="parsed-bet-card"><strong>Final assembled legs (${d.finalCount})</strong><div>${d.finalLegs.map(x=>`${x.index}. ${escapeAttr(x.label)}`).join('<br>')}</div></div></div></details>`:'';
     const body=`<div class="parsed-bet-warning"><strong>${escapeAttr(status)}</strong><br>${t.screenshotCount>1?`${t.overlapCount} overlap connection${t.overlapCount===1?'':'s'} verified across ${t.screenshotCount} screenshots.`:'Single screenshot ticket.'}</div><div class="parsed-bets-list">${t.legs.map((c,i)=>`<div class="parsed-bet-card"><strong>${i+1}. ${escapeAttr(importCandidateLabel(c))}</strong><div>${escapeAttr(c.matchedAway)} @ ${escapeAttr(c.matchedHome)}</div></div>`).join('')}</div><div class="parsed-bet-card"><strong>${t.expectedLegs}-leg ${escapeAttr(kind)}</strong><div>Payout odds ${t.odds==null?'Needs header':escapeAttr(signed(t.odds))}${t.stakeUsd!=null?` · Wager ${escapeAttr(formatUsd(t.stakeUsd))}`:''}${t.units!=null?` · ${escapeAttr(Number(t.units).toFixed(2).replace(/\.00$/,''))}u`:''}</div>${t.isTeaser?`<div>Teaser points +${escapeAttr(String(t.teaserPoints))}</div>`:''}</div>${diag}`;
     return shell('Stitched Multi-Leg Bet',body,`<button class="primary" data-load-stitched-parlay ${!t.complete?'disabled':''}>Load ${t.expectedLegs}-Leg ${t.isTeaser?'Teaser':'Parlay'} into Slip</button><button class="secondary" data-cancel-import-flow>Back to Screenshots</button>`);
   }
