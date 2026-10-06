@@ -1829,3 +1829,14 @@ html,body{min-height:100%;min-height:100dvh}
 .public-pick-detail-overlay{z-index:140;align-items:center;justify-content:center;padding:20px}.public-pick-detail-card{position:relative;width:min(360px,100%);background:#fff;border-radius:20px;padding:24px;box-shadow:0 20px 60px rgba(17,24,39,.25);text-align:center}.public-detail-close{position:absolute;right:12px;top:12px}.public-detail-badge{width:94px;height:94px;margin:0 auto 12px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(145deg,#f7dc82,#c99124);border:3px solid #8f6418;box-shadow:inset 0 0 0 3px #f9e9a7,inset 0 0 0 5px #a9781e;color:#4a3108;font-size:27px;font-weight:1000}.public-detail-badge span{font-size:9px;letter-spacing:.07em}.public-pick-detail-card h3{margin:6px 0 16px}.public-detail-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}.public-detail-stats>div{border:1px solid var(--line);border-radius:14px;padding:12px;background:#f9fafb}.public-detail-stats span{display:block;color:#667085;font-size:10px;font-weight:900;letter-spacing:.06em}.public-detail-stats strong{display:block;margin-top:4px;font-size:25px}.settings-version-line{margin:4px 0 16px;color:var(--muted);font-size:12px;font-weight:800}
 .slate-footer-right{flex-wrap:wrap}.slate-public-pick{font-size:8px}
 @media(max-width:520px){.wager-public-badge{right:2px;top:-7px;font-size:6.5px;padding:3px 5px}.public-betting-table{font-size:11px}.public-betting-table th{font-size:9px}.public-betting-table th,.public-betting-table td{padding:9px 5px}}
+
+/* 3.0.3 — Slip screenshot import stays in the top-left header. */
+.slip-header-import-btn{
+  min-width:72px;height:40px;padding:0 14px;
+  border:1px solid var(--line);border-radius:12px;
+  background:#fff;color:var(--text);font:inherit;
+  font-size:13px;font-weight:800;cursor:pointer;
+}
+@media(max-width:430px){
+  .slip-header-import-btn{min-width:66px;height:38px;padding:0 11px;font-size:12px}
+}

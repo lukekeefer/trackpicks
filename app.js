@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.2';
+const BUILD_VERSION = '3.0.3';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -2598,7 +2598,7 @@ function marketTopbar(){ return appHeader(headerWeekSelect()); }
 
 function topbar(){
   if(state.view==='market')return marketTopbar();
-  if(state.view==='slip')return appHeader(`<div class="app-header-screen-label">Slip</div>`);
+  if(state.view==='slip')return appHeader(`<button type="button" class="slip-header-import-btn" data-open-screenshot-import>Import</button><input type="file" data-screenshot-file-input accept="image/*" multiple hidden>`);
   if(state.view==='dashboard')return appHeader(`<div class="app-header-screen-label">Dashboard</div>`);
   if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
   return appHeader();
@@ -2794,8 +2794,7 @@ function renderParlaysSlip(){
 }
 function renderSlip(){
   const pushControls=`<div class="push-results-row"><button class="primary push-results-btn" data-push-results ${state.pushingResults?'disabled':''}>${state.pushingResults?'Checking Results…':'Push Results'}</button>${state.pushResultsMessage?`<div class="push-results-message">${escapeAttr(state.pushResultsMessage)}</div>`:''}</div>`;
-  const importBar=`<div class="screenshot-import-launch"><div><strong>Screenshot Import</strong><span>Bulk upload sportsbook screenshots and review bets before saving.</span></div><button type="button" class="secondary screenshot-import-btn" data-open-screenshot-import>Import Screenshots</button><input type="file" data-screenshot-file-input accept="image/*" multiple hidden></div>`;
-  return `${importBar}<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
+  return `<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
 }
 function wagerMovementSignals(g){
   const history=oddsHistoryForGame(g);
