@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.7';
+const BUILD_VERSION = '3.0.8';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3542,24 +3542,60 @@ function publicSnapshotLabel(iso){
   const d=new Date(iso); if(Number.isNaN(d.getTime()))return 'Snapshot';
   return new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'numeric',minute:'2-digit'}).format(d);
 }
+
+function publicBookDisplayReading(g,market,b){
+  if(!b)return null;
+  const sides=market==='total'?['over','under']:['home','away'];
+  const candidates=sides.map(side=>({side,row:b[side],bets:Number(b[side]?.bets_pct)}))
+    .filter(x=>Number.isFinite(x.bets));
+  if(!candidates.length)return null;
+  candidates.sort((a,b)=>b.bets-a.bets);
+  const best=candidates[0];
+  return {side:best.side,row:best.row,bets:best.bets};
+}
+function publicDisplayConsensus(g,market,books){
+  const readings=(books||[]).map(b=>publicBookDisplayReading(g,market,b)).filter(Boolean);
+  if(!readings.length)return null;
+  const sideTotals={};
+  for(const x of readings)sideTotals[x.side]=(sideTotals[x.side]||0)+1;
+  const side=Object.entries(sideTotals).sort((a,b)=>b[1]-a[1])[0]?.[0]||null;
+  if(!side)return null;
+  const ticketVals=(books||[]).map(b=>Number(b?.[side]?.bets_pct)).filter(Number.isFinite);
+  if(!ticketVals.length)return null;
+  const bets=Math.round(ticketVals.reduce((a,b)=>a+b,0)/ticketVals.length);
+  const moneyVals=['draftkings','circa'].map(k=>{
+    const b=(books||[]).find(x=>x.bookmaker===k);
+    const v=Number(b?.[side]?.handle_pct);
+    return Number.isFinite(v)&&v!==0&&v!==100?v:null;
+  }).filter(v=>v!=null);
+  const money=moneyVals.length?Math.round(moneyVals.reduce((a,b)=>a+b,0)/moneyVals.length):null;
+  return {side,bets,money};
+}
+
 function renderPublicBettingChart(){
   const g=gameById(state.activeGameId); if(!g)return '';
   const market=state.publicBettingMarket||'spread';
   const latest=publicSnapshotForGame(g,market);
   const books=latest?.books||[];
-  const side=latest?.side||null;
   const p=publicPickForMarket(g,market);
+  const displayConsensus=publicDisplayConsensus(g,market,books);
   const status=p?`<div class="public-qualified">✓ Public Pick Qualified${p.rank<=10?` · #${p.rank}`:''} · SD ${p.sd.toFixed(1)}</div>`:`<div class="public-not-qualified">Not currently qualified${latest?.reason?` · ${escapeAttr(latest.reason)}`:''}${Number.isFinite(latest?.sd)?` · SD ${latest.sd.toFixed(1)}`:''}</div>`;
-  const rows=books.map(b=>{const r=side?b[side]:null;return `<tr><td>${escapeAttr(publicBookLabel(b.bookmaker))}</td><td>${side?escapeAttr(publicSideLabel(g,market,side)):'—'}</td><td>${r?.bets_pct==null?'—':`${r.bets_pct}%`}</td><td>${r?.handle_pct==null?'—':`${r.handle_pct}%`}</td></tr>`;}).join('');
-  const trackRow=latest&&side?`<tr class="public-trackpicks-row"><td>TrackPicks</td><td>${escapeAttr(publicSideLabel(g,market,side))}</td><td>${latest.bets==null?'—':`${latest.bets}%`}</td><td>${latest.money==null?'—':`${latest.money}%`}</td></tr>`:'';
-  const history=publicBettingHistory(g,market).map(h=>`<tr><td>${escapeAttr(publicSnapshotLabel(h.latest))}</td><td>${h.qualified?escapeAttr(publicSideLabel(g,market,h.side)):'—'}</td><td>${h.bets==null?'—':`${h.bets}%`}</td><td>${h.money==null?'—':`${h.money}%`}</td></tr>`).join('');
+  const rows=books.map(b=>{
+    const d=publicBookDisplayReading(g,market,b);
+    return `<tr><td>${escapeAttr(publicBookLabel(b.bookmaker))}</td><td>${d?escapeAttr(publicSideLabel(g,market,d.side)):'—'}</td><td>${d?.row?.bets_pct==null?'—':`${d.row.bets_pct}%`}</td><td>${d?.row?.handle_pct==null?'—':`${d.row.handle_pct}%`}</td></tr>`;
+  }).join('');
+  const trackRow=displayConsensus?`<tr class="public-trackpicks-row"><td>TrackPicks</td><td>${escapeAttr(publicSideLabel(g,market,displayConsensus.side))}</td><td>${displayConsensus.bets}%</td><td>${displayConsensus.money==null?'—':`${displayConsensus.money}%`}</td></tr>`:'';
+  const history=publicBettingHistory(g,market).map(h=>{
+    const hc=publicDisplayConsensus(g,market,h.books||[]);
+    return `<tr><td>${escapeAttr(publicSnapshotLabel(h.latest))}</td><td>${hc?escapeAttr(publicSideLabel(g,market,hc.side)):'—'}</td><td>${hc?`${hc.bets}%`:'—'}</td><td>${hc?.money==null?'—':`${hc.money}%`}</td></tr>`;
+  }).join('');
   return `<div class="overlay history-overlay"><section class="history-sheet public-history-sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">Public Betting</h2><div class="detail-meta">${escapeAttr(g.away)} @ ${escapeAttr(g.home)}</div></div><button class="icon-btn" data-close-history>✕</button></div>
     <div class="public-market-toggle"><button class="${market==='spread'?'active':''}" data-public-market="spread">Spread</button><button class="${market==='total'?'active':''}" data-public-market="total">Total</button></div>
     ${status}
-    <div class="public-table-wrap"><table class="public-betting-table"><thead><tr><th>Book</th><th>Side</th><th>Tickets</th><th>Money</th></tr></thead><tbody>${rows}${trackRow}</tbody></table></div>
+    <div class="public-table-wrap"><table class="public-betting-table"><thead><tr><th>Book</th><th>Side</th><th>Tickets</th><th>Money</th></tr></thead><tbody>${rows||'<tr><td colspan="4">No data collected for this market.</td></tr>'}${trackRow}</tbody></table></div>
     <div class="public-history-heading"><strong>Collection History</strong><span>TrackPicks snapshots</span></div>
     <div class="public-table-wrap"><table class="public-betting-table public-history-table"><thead><tr><th>Snapshot</th><th>Side</th><th>Tickets</th><th>Money</th></tr></thead><tbody>${history||'<tr><td colspan="4">No history yet.</td></tr>'}</tbody></table></div>
-    <div class="chart-note">Spread and total markets qualify independently. Qualification uses DraftKings, BetMGM and Circa ticket splits: all three required, 0/100 excluded, population SD ≤ 10, and public average ≥ 67%. Rankings combine spread and total markets. TrackPicks money is the average of valid DraftKings and Circa handle percentages.</div></section></div>`;
+    <div class="chart-note">Public betting data is shown whenever TrackPicks has a valid sportsbook reading. Public Pick ribbons and rankings remain qualification-only. Qualification uses DraftKings, BetMGM and Circa ticket splits: all three required, 0/100 excluded, population SD ≤ 10, and public average ≥ 67%. Rankings combine spread and total markets.</div></section></div>`;
 }
 function renderPublicPickDetail(){
   const d=state.publicPickDetail;if(!d)return '';
