@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.11';
+const BUILD_VERSION = '3.0.12';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }

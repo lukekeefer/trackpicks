@@ -1944,3 +1944,20 @@ html,body{min-height:100%;min-height:100dvh}
 \n/* V3.0.10 — market history stair-step chart */\n.history-chart .chart-line{stroke-linejoin:miter;stroke-linecap:butt}\n.history-chart .chart-dot{cursor:pointer}\n
 /* TrackPicks 3.0.11 — 2026 Historical Trends */
 .tp-trends{max-width:1050px;margin:0 auto;padding:16px 12px 100px;color:#111827}.tp-trends-heading{display:flex;justify-content:space-between;gap:12px;align-items:center}.tp-trends-heading h2{font-size:24px;margin:0}.tp-trends-heading p,.tp-trends-panel p,.tp-trends-footnote{color:#64748b;font-size:13px;line-height:1.5}.tp-trends-tabs{display:flex;gap:8px;margin:20px 0}.tp-trends-tabs button{flex:1;padding:13px 8px;border-radius:12px;background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;font-weight:800}.tp-trends-tabs button.selected{background:#111827;color:white;border-color:#111827}.tp-trends-filters{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}.tp-trends-filters label{font-size:12px;font-weight:800;color:#475569}.tp-trends-filters select{display:block;width:100%;margin-top:6px;border:1px solid #cbd5e1;border-radius:10px;padding:11px;background:white;color:#111827}.tp-trends-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px}.tp-trends-summary>div{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px 12px}.tp-trends-summary small{display:block;color:#64748b;font-size:11px}.tp-trends-summary strong{display:block;font-size:23px;margin-top:5px}.tp-trends-panel{background:white;border:1px solid #e2e8f0;border-radius:16px;padding:16px}.tp-trends-panel h3{margin:0;font-size:19px}.tp-trends-table-wrap{overflow-x:auto}.tp-trends-table{width:100%;border-collapse:collapse;min-width:580px;font-size:13px}.tp-trends-table th{text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em;padding:12px 8px;border-bottom:1px solid #e2e8f0}.tp-trends-table td{padding:11px 8px;border-bottom:1px solid #f1f5f9;white-space:nowrap}.tp-trends-table td:first-child{font-weight:700}.tp-trends-table td:nth-child(4){min-width:115px}.tp-trends-bar{width:80px;height:6px;background:#e2e8f0;border-radius:4px;display:inline-block;margin-right:7px;vertical-align:middle;overflow:hidden}.tp-trends-bar span{display:block;height:100%;background:#2563eb}.tp-trends-status{padding:24px;text-align:center;color:#64748b}.tp-trends-footnote{margin-top:16px}@media(max-width:520px){.tp-trends-heading h2{font-size:20px}.tp-trends-summary strong{font-size:18px}.tp-trends-summary>div{padding:12px 8px}.tp-trends-filters{gap:8px}.tp-trends-panel{padding:12px}}
+
+/* TrackPicks 3.0.12 — four tabs on one row */
+.bottom-nav {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  grid-template-rows: 42px !important;
+  grid-auto-flow: column;
+  gap: 0 !important;
+  max-height: none;
+}
+.bottom-nav .nav-btn {
+  min-width: 0;
+  width: 100%;
+  padding: 0 3px;
+  font-size: clamp(11px, 2.8vw, 14px);
+  white-space: nowrap;
+}
