@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.9';
+const BUILD_VERSION = '3.0.10';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -962,7 +962,7 @@ async function fetchEarlyLineHistory(){
   const rows=[];const pageSize=1000;let from=0;
   while(true){
     const res=await state.sb.from('market_line_movements')
-      .select('game_id,season,week,away_team,home_team,market,outcome,point_to,moved_at')
+      .select('game_id,season,week,away_team,home_team,market,outcome,point_to,price_to,moved_at')
       .eq('season',2026).eq('bookmaker','draftkings')
       .order('id',{ascending:true}).range(from,from+pageSize-1);
     if(res.error)return {data:rows,error:res.error};
@@ -992,9 +992,9 @@ function earlyPointsForGame(g,kind){
       const side=earlyHomeSide(h.outcome,g);
       if(!side)continue;
       // Use the home-side quote as canonical; away is only a fallback.
-      observations.push({capturedAt:h.moved_at,value:side==='home'?value:-value,side});
+      observations.push({capturedAt:h.moved_at,value:side==='home'?value:-value,side,price:h.price_to});
     }else if(String(h.outcome).toLowerCase()==='over'){
-      observations.push({capturedAt:h.moved_at,value,side:'home'});
+      observations.push({capturedAt:h.moved_at,value,side:'home',price:h.price_to});
     }
   }
   observations.sort((a,b)=>Date.parse(a.capturedAt)-Date.parse(b.capturedAt)||
@@ -1003,8 +1003,7 @@ function earlyPointsForGame(g,kind){
   for(const p of observations){
     if(seenTimes.has(p.capturedAt))continue;
     seenTimes.add(p.capturedAt);
-    if(points.length&&points[points.length-1].value===p.value)continue;
-    points.push({capturedAt:p.capturedAt,value:p.value,source:'Lumify'});
+    points.push({capturedAt:p.capturedAt,value:p.value,source:'Lumify',price:p.price});
   }
   return points;
 }
@@ -1272,18 +1271,29 @@ function renderMovementOverview(g){
 }
 
 function historyChartPoints(g,kind){
-  const rows=oddsHistoryForGame(g);
-  const snapshots=rows.map(h=>({
+  // Preserve every stored Odds API observation, including unchanged lines.
+  const snapshots=oddsHistoryForGame(g).map(h=>({
     capturedAt:h.capturedAt,
     value:kind==='Spread'?spreadForTeamFromSnapshot(h,g.home):h.total,
-    source:'TrackPicks'
-  })).filter(p=>p.value!=null&&p.capturedAt);
+    source:'Odds API',price:null
+  })).filter(p=>p.value!=null&&p.capturedAt&&Number.isFinite(Date.parse(p.capturedAt)));
+  // Lumify fills the earlier timeline and any genuine gaps between snapshots.
   const early=earlyPointsForGame(g,kind);
-  const firstSnapshot=snapshots.length?Math.min(...snapshots.map(p=>Date.parse(p.capturedAt))):Infinity;
-  // Lumify supplies the earlier segment; TrackPicks is authoritative afterward.
-  const combined=[...early.filter(p=>Date.parse(p.capturedAt)<firstSnapshot),...snapshots]
-    .sort((a,b)=>Date.parse(a.capturedAt)-Date.parse(b.capturedAt));
-  return combined.filter((p,i)=>i===0||p.value!==combined[i-1].value);
+  const combined=[...snapshots,...early]
+    .filter(p=>Number.isFinite(Date.parse(p.capturedAt)))
+    .sort((a,b)=>Date.parse(a.capturedAt)-Date.parse(b.capturedAt)||
+      (a.source==='Odds API'?-1:1));
+  const points=[];
+  for(const p of combined){
+    const previous=points[points.length-1];
+    // Same-timestamp duplicate quotes: prefer the Odds API observation.
+    if(previous&&Date.parse(previous.capturedAt)===Date.parse(p.capturedAt)){
+      if(previous.source!=='Odds API'&&p.source==='Odds API')points[points.length-1]=p;
+      continue;
+    }
+    points.push(p);
+  }
+  return points;
 }
 function renderHistorySvg(points,kind,g){
   if(points.length<2)return '<div class="chart-empty">Not enough snapshots to graph yet.</div>';
@@ -1296,7 +1306,11 @@ function renderHistorySvg(points,kind,g){
   minV=Number(minV.toFixed(1));maxV=Number(maxV.toFixed(1));
   const x=t=>L+((t-minT)/(maxT-minT))*(W-L-R), y=v=>T+(1-(v-minV)/(maxV-minV))*(H-T-B);
   const coords=points.map((p,i)=>({x:x(times[i]),y:y(vals[i]),p,i}));
-  const path=coords.map((c,i)=>`${i?'L':'M'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
+  // Step-after interpolation: a quote holds until the next observed quote.
+  // Never invent intermediate market observations.
+  const path=coords.map((c,i)=>i===0
+    ?`M ${c.x.toFixed(1)} ${c.y.toFixed(1)}`
+    :`H ${c.x.toFixed(1)} V ${c.y.toFixed(1)}`).join(' ');
   const ticks=[];for(let v=maxV;v>=minV-0.001;v-=STEP)ticks.push(Number(v.toFixed(1)));
   const grid=ticks.map(v=>{const yy=y(v);return `<line x1="${L}" y1="${yy.toFixed(1)}" x2="${W-R}" y2="${yy.toFixed(1)}" class="chart-grid-line"/><text x="${L-8}" y="${(yy+4).toFixed(1)}" text-anchor="end" class="chart-axis-text">${kind==='Spread'?signed(v):v}</text>`;}).join('');
   const selectedIndex=Number.isInteger(state.historyPointIndex)?state.historyPointIndex:null;
@@ -1304,7 +1318,8 @@ function renderHistorySvg(points,kind,g){
   let tooltip='';
   if(selectedIndex!=null&&coords[selectedIndex]){
     const c=coords[selectedIndex],when=formatKickoff(c.p.capturedAt);
-    const lineLabel=(kind==='Spread'?`${g.home} ${signed(c.p.value)}`:`O/U ${c.p.value}`)+` · ${c.p.source||'TrackPicks'}`;
+    const priceLabel=c.p.price!=null?` (${formatAmericanOdds(c.p.price)})`:'';
+    const lineLabel=(kind==='Spread'?`${g.home} ${signed(c.p.value)}`:`O/U ${c.p.value}`)+priceLabel+` · ${c.p.source||'Odds API'}`;
     const boxW=214,boxH=58;
     let boxX=Math.max(L,Math.min(W-R-boxW,c.x-boxW/2));
     let boxY=c.y-boxH-14;if(boxY<T)boxY=c.y+14;
@@ -1321,7 +1336,7 @@ function renderHistoryChart(){
   const firstLabel=first==null?'—':(kind==='Spread'?`${g.home} ${signed(first)}`:`O/U ${first}`);
   const currentLabel=current==null?'—':(kind==='Spread'?`${g.home} ${signed(current)}`:`O/U ${current}`);
   const moveLabel=delta==null?'—':`${delta>0?'+':''}${Number(delta.toFixed(1))} pts`;
-  return `<div class="overlay history-overlay"><section class="history-sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${kind} History</h2><div class="detail-meta">${g.away} @ ${g.home} · DraftKings</div></div><button class="icon-btn" data-close-history>✕</button></div><div class="chart-summary"><div><span>First tracked</span><strong>${firstLabel}</strong></div><div><span>Current</span><strong>${currentLabel}</strong></div><div><span>Net move</span><strong>${moveLabel}</strong></div></div>${renderHistorySvg(points,kind,g)}<div class="chart-note">${points.length} distinct observed line point${points.length===1?'':'s'} · Lumify early history + TrackPicks snapshots. First tracked is not an official sportsbook opener.</div></section></div>`;
+  return `<div class="overlay history-overlay"><section class="history-sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">${kind} History</h2><div class="detail-meta">${g.away} @ ${g.home} · DraftKings</div></div><button class="icon-btn" data-close-history>✕</button></div><div class="chart-summary"><div><span>First tracked</span><strong>${firstLabel}</strong></div><div><span>Current</span><strong>${currentLabel}</strong></div><div><span>Net move</span><strong>${moveLabel}</strong></div></div>${renderHistorySvg(points,kind,g)}<div class="chart-note">${points.length} recorded observation${points.length===1?'':'s'} · Odds API snapshots + Lumify movements. Flat steps show when a recorded line held steady. First tracked is not an official sportsbook opener.</div></section></div>`;
 }
 function fromDbWager(r){ return {id:r.id,gameId:r.game_id,betType:r.bet_type,selection:r.selection,line:Number(r.line),payoutOdds:r.payout_odds==null?-110:Number(r.payout_odds),units:Number(r.units),who:r.who,pick:r.pick,result:r.result||'Pending',marketSpread:r.market_spread==null?null:Number(r.market_spread),marketTotal:r.market_total==null?null:Number(r.market_total),marketMoneyline:r.market_moneyline==null?null:Number(r.market_moneyline),importBatchId:r.import_batch_id||null}; }
 function toDbWager(w){ return {id:w.id,user_id:state.user.id,game_id:w.gameId,bet_type:w.betType,selection:w.selection,line:w.line,payout_odds:w.payoutOdds,units:w.units,who:w.who,pick:w.pick,result:w.result||'Pending',market_spread:w.marketSpread,market_total:w.marketTotal,market_moneyline:w.marketMoneyline,import_batch_id:w.importBatchId||null,updated_at:new Date().toISOString()}; }

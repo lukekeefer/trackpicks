@@ -1941,3 +1941,4 @@ html,body{min-height:100%;min-height:100dvh}
   .hero-public-total strong{font-size:17px}
   .slate-footer-right .slate-public-pick{max-width:136px;font-size:8px;padding:3px 5px}
 }
+\n/* V3.0.10 — market history stair-step chart */\n.history-chart .chart-line{stroke-linejoin:miter;stroke-linecap:butt}\n.history-chart .chart-dot{cursor:pointer}\n
