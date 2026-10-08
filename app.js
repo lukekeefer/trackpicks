@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.10';
+const BUILD_VERSION = '3.0.11';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -154,7 +154,7 @@ const state = {
   activeTeamId: null, activeTeamName: '', teamScreenGames: [], teamScreenLoading: false, teamScreenError: '',
   gameTeamStats: {}, gameTeamStatsLoading: false,
   standardUnitSize: null,
-  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null, screenshotImportFlow: null, screenshotImportReadyToReview: false, publicPickDetail: null, publicBettingMarket: 'spread'
+  showScreenshotImporter: false, screenshotImportFiles: [], screenshotImportMessage: '', screenshotImportProcessing: false, screenshotImportWeek: null, screenshotImportFlow: null, screenshotImportReadyToReview: false, publicPickDetail: null, publicBettingMarket: 'spread', trendsRows: [], trendsLoading: false, trendsLoaded: false, trendsError: '', trendsMetric: 'favorite_ats', trendsConference: 'All', trendsWeek: 'All'
 };
 let tempKind='', tempSelection=null, tempWho=null, tempLine='', tempPayout='-110', tempUnits=1;
 
@@ -3076,8 +3076,9 @@ function render(){
   if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
   if(!cloudConfigured()){ app.innerHTML=renderCloudSetup(); bindAuth(); return; }
   if(!state.user){ app.innerHTML=renderAuth(); bindAuth(); return; }
-  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.screenshotImportFlow?renderScreenshotImportFlow():''}${state.historyChartKind?(state.historyChartKind==='Public'?renderPublicBettingChart():renderHistoryChart()):''}${state.activeTeamId?renderTeamScreen():''}${renderPublicPickDetail()}`;
+  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():state.view==='trends'?renderTrends():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.screenshotImportFlow?renderScreenshotImportFlow():''}${state.historyChartKind?(state.historyChartKind==='Public'?renderPublicBettingChart():renderHistoryChart()):''}${state.activeTeamId?renderTeamScreen():''}${renderPublicPickDetail()}`;
   bind();
+  if(state.view==='trends')bindTrends();
 }
 
 function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">${versionStamp()} · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
@@ -3119,11 +3120,64 @@ function marketTopbar(){ return appHeader(headerWeekSelect()); }
 function topbar(){
   if(state.view==='market')return marketTopbar();
   if(state.view==='slip')return appHeader(`<button type="button" class="tp-import-header-btn slip-header-import-btn" data-launch-import>Import</button>`);
+  if(state.view==='trends')return appHeader(`<div class="app-header-screen-label">Historical Trends</div>`);
   if(state.view==='dashboard')return appHeader(`<div class="app-header-screen-label">Dashboard</div>`);
   if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
   return appHeader();
 }
-function bottomNav(){ if(state.view==='weeks'||state.activeGameId||state.activeTeamId||state.showSettings||state.showScreenshotImporter)return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
+function bottomNav(){ if(state.view==='weeks'||state.activeGameId||state.activeTeamId||state.showSettings||state.showScreenshotImporter)return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='trends'?'active':''}" data-nav="trends">Trends</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
+
+// Historical Trends: 2026, read-only; derived from the existing Team screen grades.
+async function loadConferenceTrends(force=false){
+  if(!state.sb||!state.user||state.trendsLoading||(state.trendsLoaded&&!force))return;
+  state.trendsLoading=true;state.trendsError='';render();
+  try{
+    const {data,error}=await state.sb.from('trackpicks_2026_conference_buckets')
+      .select('metric,conference,week,bucket,bucket_order,games,wins_or_overs,losses_or_unders,pushes')
+      .order('conference',{ascending:true}).limit(2000);
+    if(error)throw error;
+    state.trendsRows=data||[];state.trendsLoaded=true;
+  }catch(e){state.trendsError=e?.message||'Unable to load conference trends.';}
+  finally{state.trendsLoading=false;render();}
+}
+function trendsAggregate(rows){
+  const map=new Map();
+  for(const r of rows){
+    const key=`${r.conference}|${r.bucket_order}`;
+    if(!map.has(key))map.set(key,{conference:r.conference,bucket:r.bucket,order:Number(r.bucket_order),w:0,l:0,p:0});
+    const a=map.get(key);a.w+=Number(r.wins_or_overs||0);a.l+=Number(r.losses_or_unders||0);a.p+=Number(r.pushes||0);
+  }
+  return [...map.values()].sort((a,b)=>a.conference.localeCompare(b.conference)||a.order-b.order);
+}
+function renderTrends(){
+  const metric=state.trendsMetric;
+  const rows=state.trendsRows.filter(r=>r.metric===metric&&(state.trendsWeek==='All'||Number(r.week)===Number(state.trendsWeek))&&(state.trendsConference==='All'||r.conference===state.trendsConference));
+  const aggregate=trendsAggregate(rows);
+  const confs=[...new Set(state.trendsRows.map(r=>r.conference))].sort();
+  const weeks=[...new Set(state.trendsRows.map(r=>Number(r.week)))].sort((a,b)=>a-b);
+  const sums=aggregate.reduce((a,r)=>({w:a.w+r.w,l:a.l+r.l,p:a.p+r.p}),{w:0,l:0,p:0});
+  const pct=(w,l)=>w+l?`${(100*w/(w+l)).toFixed(1)}%`:'—';
+  const title=metric==='favorite_ats'?'Conference Favorites ATS':'Conference Overs by Total';
+  const intro=metric==='favorite_ats'?'Only the favored team counts for its conference.':'A game counts once per participating conference, including intra-conference games.';
+  return `<div class="tp-trends">
+    <div class="tp-trends-heading"><div><h2>2026 Historical Trends</h2><p>Conference betting results from the existing Team screen grading system.</p></div><button class="secondary" data-trends-refresh ${state.trendsLoading?'disabled':''}>Refresh</button></div>
+    <div class="tp-trends-tabs"><button data-trends-metric="favorite_ats" class="${metric==='favorite_ats'?'selected':''}">Favorites ATS</button><button data-trends-metric="over_total" class="${metric==='over_total'?'selected':''}">Overs by Total</button></div>
+    <div class="tp-trends-filters"><label>Conference<select data-trends-conference><option value="All">All conferences</option>${confs.map(c=>`<option value="${escapeAttr(c)}" ${c===state.trendsConference?'selected':''}>${escapeAttr(c)}</option>`).join('')}</select></label><label>Week<select data-trends-week><option value="All">Full 2026 season</option>${weeks.map(w=>`<option value="${w}" ${String(w)===String(state.trendsWeek)?'selected':''}>Week ${w}</option>`).join('')}</select></label></div>
+    ${state.trendsLoading?'<div class="tp-trends-status">Loading 2026 conference trends…</div>':''}
+    ${state.trendsError?`<div class="tp-trends-status">${escapeAttr(state.trendsError)}</div>`:''}
+    ${!state.trendsLoading&&!state.trendsError?`<div class="tp-trends-summary"><div><small>${metric==='favorite_ats'?'Favorites ATS':'Overs record'}</small><strong>${sums.w}-${sums.l}-${sums.p}</strong></div><div><small>${metric==='favorite_ats'?'Cover rate':'Over rate'}</small><strong>${pct(sums.w,sums.l)}</strong></div><div><small>Graded appearances</small><strong>${sums.w+sums.l+sums.p}</strong></div></div>
+    <section class="tp-trends-panel"><h3>${title}</h3><p>${intro} Pushes excluded from percentages.</p>
+    ${aggregate.length?`<div class="tp-trends-table-wrap"><table class="tp-trends-table"><thead><tr><th>Conference</th><th>${metric==='favorite_ats'?'Spread bucket':'Total bucket'}</th><th>W-L-P</th><th>${metric==='favorite_ats'?'Cover %':'Over %'}</th><th>Games</th></tr></thead><tbody>${aggregate.map(r=>`<tr><td>${escapeAttr(r.conference)}</td><td>${escapeAttr(r.bucket)}</td><td>${r.w}-${r.l}-${r.p}</td><td><div class="tp-trends-bar"><span style="width:${r.w+r.l?100*r.w/(r.w+r.l):0}%"></span></div><strong>${pct(r.w,r.l)}</strong></td><td>${r.w+r.l+r.p}</td></tr>`).join('')}</tbody></table></div>`:'<div class="tp-trends-status">No graded games match these filters.</div>'}
+    </section><p class="tp-trends-footnote">2026 only · Source: Team screen closing lines and grades. Conference totals are appearances, not unique games across conferences.</p></div>`:''}
+  </div>`;
+}
+function bindTrends(){
+  document.querySelectorAll('[data-trends-metric]').forEach(el=>el.onclick=()=>{state.trendsMetric=el.dataset.trendsMetric;render();});
+  document.querySelector('[data-trends-conference]')?.addEventListener('change',e=>{state.trendsConference=e.target.value;render();});
+  document.querySelector('[data-trends-week]')?.addEventListener('change',e=>{state.trendsWeek=e.target.value;render();});
+  document.querySelector('[data-trends-refresh]')?.addEventListener('click',()=>loadConferenceTrends(true));
+}
+
 function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
 function renderMarket(){
@@ -4199,7 +4253,7 @@ function bind(){
     render();
   });
   document.querySelectorAll('[data-week]').forEach(el=>el.onclick=()=>{state.selectedWeek=Number(el.dataset.week);state.view='market';state.slateDivision='FBS';state.slateConference='All';state.importMessage='';render();});
-  document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{state.view=el.dataset.nav;render();});
+  document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{state.view=el.dataset.nav;render();if(state.view==='trends')loadConferenceTrends();});
   document.querySelectorAll('[data-settings]').forEach(el=>el.onclick=()=>{state.showSettings=true;render();});
   document.querySelectorAll('[data-launch-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=true;state.screenshotImportReadyToReview=false;render();});
   document.querySelectorAll('[data-close-settings]').forEach(el=>el.onclick=()=>{state.showSettings=false;render();});
