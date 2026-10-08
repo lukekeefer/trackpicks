@@ -1961,3 +1961,18 @@ html,body{min-height:100%;min-height:100dvh}
   font-size: clamp(11px, 2.8vw, 14px);
   white-space: nowrap;
 }
+
+/* TrackPicks 3.1 — four equal nav buttons with icon, labels and dividers */
+.bottom-nav.tp31-nav{position:fixed!important;left:0!important;right:0!important;bottom:0!important;transform:none!important;width:100%!important;max-width:none!important;display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;grid-template-rows:72px!important;grid-auto-flow:row!important;padding:4px 0 env(safe-area-inset-bottom,0px)!important;gap:0!important;background:#fff!important;border-top:1px solid #e5e7eb!important;box-shadow:0 -3px 14px rgba(15,23,42,.05)}
+.tp31-nav .nav-btn{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;width:100%;min-width:0;min-height:68px;padding:7px 1px!important;font-size:clamp(11px,3vw,14px)!important;line-height:1.15!important;white-space:nowrap!important;font-weight:700;color:#667085}
+.tp31-nav .nav-btn:not(:last-child)::after{content:"";position:absolute;right:0;top:17%;height:66%;width:1px;background:#d9dee6}
+.tp31-nav .nav-btn.active{color:#16233c!important}
+.tp31-nav .nav-btn.active::before{content:"";position:absolute;bottom:3px;left:31%;width:38%;height:3px;border-radius:3px;background:#d5a323}
+.tp31-nav-icon{width:25px;height:25px;flex:none}
+.app-shell{padding-bottom:calc(100px + env(safe-area-inset-bottom,0px))}
+.tp31-public-row{display:flex;justify-content:center;align-items:center;margin:10px 0 5px;min-height:23px}
+.tp31-public-row .slate-public-pick{font-size:11px!important;max-width:none!important;padding:5px 11px!important}
+.slate-footer-right{flex:0 0 auto!important}
+.tp31-login-logo{display:block;width:min(270px,90%);height:auto;max-height:90px;object-fit:contain;margin:0 auto 12px}
+.auth-card:has(.tp31-login-logo){text-align:center}
+.auth-card:has(.tp31-login-logo) .auth-fields{text-align:left}

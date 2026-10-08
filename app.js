@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.0.12';
+const BUILD_VERSION = '3.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -129,7 +129,7 @@ const state = {
   activePickerSelector: false,
   activeAddName: false,
   isAdmin: false,
-  view: 'weeks', selectedWeek: 4, activeGameId: null, editWagerId: null,
+  view: 'market', selectedWeek: (dashboardTargetWeek(new Date()) ?? 4), activeGameId: null, editWagerId: null,
   saving: false, loadingWeek: false, syncing: false, showSettings: false,
   showImportManager: false, importBatches: [], importManagerLoading: false, deletingImportBatchId: null,
   importMessage: '', authMessage: '', authMode: 'signin',
@@ -3058,7 +3058,7 @@ function effectivePickerNames(){
 function renderDisplayNameSetup(){
   return `<div class="auth-wrap">
     <div class="auth-card">
-      <div class="brand-mark">TrackPicks</div>
+      <img class="tp31-login-logo" src="trackpicks-wordmark.png" alt="TrackPicks">
       <h1>What should we call you?</h1>
       <p class="auth-copy">This becomes the default name on your picks. You can change it later in Settings.</p>
       <div class="field full">
@@ -3073,21 +3073,20 @@ function renderDisplayNameSetup(){
 function render(){
   const app=document.getElementById('app');
   if(state.user && !state.displayName){ app.innerHTML=renderDisplayNameSetup(); bindAuth(); return; }
-  if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
+  if(!state.authReady){ app.innerHTML=`<div class="auth-shell"><div class="auth-card"><img class="tp31-login-logo" src="trackpicks-wordmark.png" alt="TrackPicks"><div class="auth-subtitle">Connecting…</div></div></div>`; return; }
   if(!cloudConfigured()){ app.innerHTML=renderCloudSetup(); bindAuth(); return; }
   if(!state.user){ app.innerHTML=renderAuth(); bindAuth(); return; }
-  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='weeks'?renderWeeks():state.view==='market'?renderMarket():state.view==='slip'?renderSlip():state.view==='trends'?renderTrends():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.screenshotImportFlow?renderScreenshotImportFlow():''}${state.historyChartKind?(state.historyChartKind==='Public'?renderPublicBettingChart():renderHistoryChart()):''}${state.activeTeamId?renderTeamScreen():''}${renderPublicPickDetail()}`;
+  app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='market'?renderMarket():state.view==='slip'?renderSlip():state.view==='trends'?renderTrends():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.screenshotImportFlow?renderScreenshotImportFlow():''}${state.historyChartKind?(state.historyChartKind==='Public'?renderPublicBettingChart():renderHistoryChart()):''}${state.activeTeamId?renderTeamScreen():''}${renderPublicPickDetail()}`;
   bind();
   if(state.view==='trends')bindTrends();
 }
 
-function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">${versionStamp()} · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
+function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><img class="tp31-login-logo" src="trackpicks-wordmark.png" alt="TrackPicks"><div class="auth-subtitle">${versionStamp()} · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
 
-function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><h1 class="auth-brand">TrackPicks</h1><div class="auth-subtitle">${versionStamp()} · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
+function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><img class="tp31-login-logo" src="trackpicks-wordmark.png" alt="TrackPicks"><div class="auth-subtitle">${versionStamp()} · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
 function headerWeekSelect(){
   const weekOptions=state.weeks
-    .filter(w=>w.enabled)
     .map(w=>`<option value="${w.week}" ${w.week===state.selectedWeek?'selected':''}>Week ${w.week}</option>`)
     .join('');
   return `<div class="app-header-week-wrap">
@@ -3122,10 +3121,21 @@ function topbar(){
   if(state.view==='slip')return appHeader(`<button type="button" class="tp-import-header-btn slip-header-import-btn" data-launch-import>Import</button>`);
   if(state.view==='trends')return appHeader(`<div class="app-header-screen-label">Historical Trends</div>`);
   if(state.view==='dashboard')return appHeader(`<div class="app-header-screen-label">Dashboard</div>`);
-  if(state.view==='weeks')return appHeader(`<div class="app-header-screen-label">Weeks</div>`);
   return appHeader();
 }
-function bottomNav(){ if(state.view==='weeks'||state.activeGameId||state.activeTeamId||state.showSettings||state.showScreenshotImporter)return''; return `<nav class="bottom-nav"><button class="nav-btn ${state.view==='market'?'active':''}" data-nav="market">Full Slate</button><button class="nav-btn ${state.view==='slip'?'active':''}" data-nav="slip">Slip</button><button class="nav-btn ${state.view==='trends'?'active':''}" data-nav="trends">Trends</button><button class="nav-btn ${state.view==='dashboard'?'active':''}" data-nav="dashboard">Dashboard</button></nav>`; }
+function bottomNav(){
+  if(state.activeGameId||state.activeTeamId||state.showSettings||state.showScreenshotImporter)return '';
+  const icons={
+    market:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/>',
+    slip:'<path d="M4 5h16v4a3 3 0 0 0 0 6v4H4v-4a3 3 0 0 0 0-6V5Z"/><path d="M12 5v2M12 10v4M12 17v2"/>',
+    trends:'<path d="M4 20V12M10 20V7M16 20v-5M22 20V4"/><path d="M2 20h22"/>',
+    dashboard:'<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="10" width="8" height="11" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/>'
+  };
+  return '<nav class="bottom-nav tp31-nav" aria-label="Main navigation">'+
+    [['market','Full Slate'],['slip','Slip'],['trends','Trends'],['dashboard','Dashboard']]
+    .map(([id,label])=>`<button type="button" class="nav-btn ${state.view===id?'active':''}" data-nav="${id}" ${state.view===id?'aria-current="page"':''}><svg class="tp31-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[id]}</svg><span>${label}</span></button>`).join('')+
+    '</nav>';
+}
 
 // Historical Trends: 2026, read-only; derived from the existing Team screen grades.
 async function loadConferenceTrends(force=false){
@@ -3178,7 +3188,6 @@ function bindTrends(){
   document.querySelector('[data-trends-refresh]')?.addEventListener('click',()=>loadConferenceTrends(true));
 }
 
-function renderWeeks(){ return `<div class="section-title">Weeks 1–12</div><div class="week-grid">${state.weeks.map(w=>{const games=weekGames(w.week).length,picks=weekWagers(w.week).length;const meta=!w.enabled?'Not used this season':games?`${games} games loaded · ${picks} saved wager(s)`:(w.week===4?'Starting week · not loaded':'Not loaded');return `<button class="week-card ${w.enabled?'':'disabled'}" data-week="${w.week}" ${w.enabled?'':'disabled'}><div class="week-name">Week ${w.week}</div><div class="week-meta">${meta}</div></button>`}).join('')}</div>`; }
 
 function renderMarket(){
   const allGames=weekGames(state.selectedWeek),
@@ -3209,12 +3218,13 @@ function renderMarket(){
         ${renderSlateTotalBlock(g,signals)}
       </div>
 
+      ${renderSlatePublicPick(g)?`<div class="tp31-public-row">${renderSlatePublicPick(g)}</div>`:''}
       <div class="slate-card-footer">
         <div class="slate-kickoff">
           <strong>${escapeAttr(k.date)}</strong>
           <span>${escapeAttr(k.time||'Time TBD')}</span>
         </div>
-        <div class="slate-footer-right">${renderSlatePublicPick(g)}<div class="slate-tv">${renderTvNetworkLogo(g.tv||'')}</div></div>
+        <div class="slate-footer-right"><div class="slate-tv">${renderTvNetworkLogo(g.tv||'')}</div></div>
       </div>
 
       ${renderSlateStatus(saved,caution,missing)}
@@ -4252,7 +4262,6 @@ function bind(){
     state.importMessage='';
     render();
   });
-  document.querySelectorAll('[data-week]').forEach(el=>el.onclick=()=>{state.selectedWeek=Number(el.dataset.week);state.view='market';state.slateDivision='FBS';state.slateConference='All';state.importMessage='';render();});
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{state.view=el.dataset.nav;render();if(state.view==='trends')loadConferenceTrends();});
   document.querySelectorAll('[data-settings]').forEach(el=>el.onclick=()=>{state.showSettings=true;render();});
   document.querySelectorAll('[data-launch-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=true;state.screenshotImportReadyToReview=false;render();});
