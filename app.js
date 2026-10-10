@@ -902,7 +902,7 @@ async function syncFromCloud(){
       state.sb.from('cfb_teams').select('espn_name,espn_team_id,conference,subdivision,season,abbreviation,logo_url,short_display_name,short_nickname,smaller_font,smaller_nickname_font,extra_small_nickname_font').eq('season',2026),
       state.sb.from('cfb_team_aliases').select('provider,alias,espn_name'),
       state.sb.from('cfb_rankings').select('season,week,poll_type,poll_name,rank,team_id,published_at').eq('season',2026).gte('week',0).lte('week',20),
-      state.sb.from('public_betting_snapshots').select('game_id,bookmaker,market,side,bets_pct,handle_pct,line_value,lumify_captured_at').eq('season',2026).gte('week',0).lte('week',20).order('lumify_captured_at',{ascending:true}),
+      fetchAllPublicBettingSnapshots(),
       state.sb.from('lumify_api_usage').select('*').limit(200)
     ]);
     if(gamesRes.error)throw gamesRes.error;
@@ -935,6 +935,31 @@ async function syncFromCloud(){
     await logoWarmup;
   }catch(err){ state.importMessage=`Sync failed: ${err.message||err}`; }
   finally{ state.syncing=false; }
+}
+
+// Supabase defaults to a 1,000-row result. Public betting must page through
+// every checkpoint; otherwise the oldest 1,000 hide newer Thursday/Friday data.
+async function fetchAllPublicBettingSnapshots(){
+  const pageSize=1000, all=[];
+  for(let offset=0; ; offset+=pageSize){
+    const {data,error}=await state.sb.from('public_betting_snapshots')
+      .select('game_id,bookmaker,market,side,bets_pct,handle_pct,line_value,lumify_captured_at')
+      .eq('season',2026).gte('week',0).lte('week',20)
+      .order('id',{ascending:false}).range(offset,offset+pageSize-1);
+    if(error)return {data:[],error};
+    all.push(...(data||[]));
+    if(!data||data.length<pageSize)break;
+  }
+  return {data:all,error:null};
+}
+
+// Refresh only public data when its panel opens. This does not call Lumify
+// and therefore consumes no Lumify API credits.
+async function refreshPublicBettingSnapshots(){
+  if(!state.sb||!state.user)return;
+  const result=await fetchAllPublicBettingSnapshots();
+  if(result.error)throw result.error;
+  state.publicBettingSnapshots=result.data||[];
 }
 
 async function fetchAllOddsHistory(){
@@ -3723,13 +3748,14 @@ function renderPublicBettingChart(){
     return `<tr><td>${escapeAttr(publicBookLabel(b.bookmaker))}</td><td>${d?escapeAttr(publicSideLabel(g,market,d.side)):'—'}</td><td>${d?.row?.bets_pct==null?'—':`${d.row.bets_pct}%`}</td><td>${d?.row?.handle_pct==null?'—':`${d.row.handle_pct}%`}</td></tr>`;
   }).join('');
   const trackRow=displayConsensus?`<tr class="public-trackpicks-row"><td>TrackPicks</td><td>${escapeAttr(publicSideLabel(g,market,displayConsensus.side))}</td><td>${displayConsensus.bets}%</td><td>${displayConsensus.money==null?'—':`${displayConsensus.money}%`}</td></tr>`:'';
-  const history=publicBettingHistory(g,market).map(h=>{
+  const history=publicBettingHistory(g,market).slice().reverse().map(h=>{
     const hc=publicDisplayConsensus(g,market,h.books||[]);
     return `<tr><td>${escapeAttr(publicSnapshotLabel(h.latest))}</td><td>${hc?escapeAttr(publicSideLabel(g,market,hc.side)):'—'}</td><td>${hc?`${hc.bets}%`:'—'}</td><td>${hc?.money==null?'—':`${hc.money}%`}</td></tr>`;
   }).join('');
   return `<div class="overlay history-overlay"><section class="history-sheet public-history-sheet"><div class="sheet-handle"></div><div class="close-row"><div><h2 style="margin:0">Public Betting</h2><div class="detail-meta">${escapeAttr(g.away)} @ ${escapeAttr(g.home)}</div></div><button class="icon-btn" data-close-history>✕</button></div>
     <div class="public-market-toggle"><button class="${market==='spread'?'active':''}" data-public-market="spread">Spread</button><button class="${market==='total'?'active':''}" data-public-market="total">Total</button></div>
     ${status}
+    <div class="detail-meta">Latest source snapshot: ${latest?.latest?escapeAttr(publicSnapshotLabel(latest.latest)):"Unavailable"} CT</div>
     <div class="public-table-wrap"><table class="public-betting-table"><thead><tr><th>Book</th><th>Side</th><th>Tickets</th><th>Money</th></tr></thead><tbody>${rows||'<tr><td colspan="4">No data collected for this market.</td></tr>'}${trackRow}</tbody></table></div>
     <div class="public-history-heading"><strong>Collection History</strong><span>TrackPicks snapshots</span></div>
     <div class="public-table-wrap"><table class="public-betting-table public-history-table"><thead><tr><th>Snapshot</th><th>Side</th><th>Tickets</th><th>Money</th></tr></thead><tbody>${history||'<tr><td colspan="4">No history yet.</td></tr>'}</tbody></table></div>
@@ -4325,7 +4351,7 @@ function bind(){
   document.querySelectorAll('[data-open-team]').forEach(el=>el.onclick=(event)=>{event.preventDefault();event.stopPropagation();openTeamScreen(el.dataset.openTeam);});
   document.querySelectorAll('[data-close-team]').forEach(el=>el.onclick=()=>{state.activeTeamId=null;state.activeTeamName='';state.teamScreenGames=[];state.teamScreenLoading=false;state.teamScreenError='';render();});
   document.querySelectorAll('[data-close]').forEach(el=>el.onclick=()=>{state.activeGameId=null;state.editWagerId=null;state.historyChartKind=null;state.historyPointIndex=null;tempWho=null;resetWagerDraft();state.saving=false;render();});
-  document.querySelectorAll('[data-open-history]').forEach(el=>el.onclick=(event)=>{event.preventDefault();captureWagerDraft();const scrollTop=captureGameSheetScroll();state.historyChartKind=el.dataset.openHistory;state.historyPointIndex=null;render();restoreGameSheetScroll(scrollTop);});
+  document.querySelectorAll('[data-open-history]').forEach(el=>el.onclick=async(event)=>{event.preventDefault();captureWagerDraft();const scrollTop=captureGameSheetScroll();const kind=el.dataset.openHistory;state.historyChartKind=kind;state.historyPointIndex=null;if(kind==='Public'){try{await refreshPublicBettingSnapshots();}catch(err){console.warn('Public betting refresh failed',err);}}render();restoreGameSheetScroll(scrollTop);});
   document.querySelectorAll('[data-close-history]').forEach(el=>el.onclick=(event)=>{event.preventDefault();const scrollTop=captureGameSheetScroll();state.historyChartKind=null;state.historyPointIndex=null;render();restoreGameSheetScroll(scrollTop);});
   document.querySelectorAll('[data-public-market]').forEach(el=>el.onclick=()=>{state.publicBettingMarket=el.dataset.publicMarket;render();});
   document.querySelectorAll('[data-public-pick-detail]').forEach(el=>el.onclick=(event)=>{event.preventDefault();event.stopPropagation();state.publicPickDetail={gameId:state.activeGameId,market:el.dataset.publicPickDetail};render();});
