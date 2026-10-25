@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.1';
+const BUILD_VERSION = '3.2.0';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -3104,6 +3104,7 @@ function render(){
   app.innerHTML=`<div class="app-shell">${topbar()}<main class="page">${state.view==='market'?renderMarket():state.view==='slip'?renderSlip():state.view==='trends'?renderTrends():renderDashboard()}</main></div>${bottomNav()}${state.activeGameId?renderGameSheet():''}${renderPickerSelector()}${state.showSettings?renderSettingsSheet():''}${state.showImportManager?renderImportManager():''}${state.showScreenshotImporter?renderScreenshotImporter():''}${state.screenshotImportFlow?renderScreenshotImportFlow():''}${state.historyChartKind?(state.historyChartKind==='Public'?renderPublicBettingChart():renderHistoryChart()):''}${state.activeTeamId?renderTeamScreen():''}${renderPublicPickDetail()}`;
   bind();
   if(state.view==='trends')bindTrends();
+  if(state.view==='slip')queueMicrotask(refreshSlipLive);
 }
 
 function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-card"><img class="tp31-login-logo" src="trackpicks-wordmark.png" alt="TrackPicks"><div class="auth-subtitle">${versionStamp()} · Cloud setup</div><div class="cloud-warning">Enter your Supabase Project URL and public anon/publishable key. These are project connection values, not your account password.</div><div class="setup-grid"><div class="field"><label>Supabase Project URL</label><input id="setupUrl" type="url" placeholder="https://xxxxx.supabase.co" value="${escapeAttr(state.supabaseUrl)}"></div><div class="field"><label>Supabase public key</label><input id="setupKey" type="password" placeholder="Anon / publishable key" value="${escapeAttr(state.supabaseKey)}"></div></div><button class="primary" data-save-cloud>Save Cloud Setup</button>${state.authMessage?`<div class="auth-message error">${state.authMessage}</div>`:''}</div></div>`; }
@@ -3339,19 +3340,144 @@ async function pushResults(){
   }
 }
 
+
+// Slip live data is optional: failures never interfere with editing or grading picks.
+const slipLiveCache = new Map();
+let slipLiveRefreshRunning = false;
+function slipStatus(g){
+  if(!g)return 'completed';
+  if(g.gameCompleted || /final|completed/i.test(g.gameStatus||''))return 'completed';
+  const kickoff=Date.parse(g.commenceTime||'');
+  if(!Number.isFinite(kickoff)||Date.now()<kickoff)return 'upcoming';
+  // Do not label a game live just because its scheduled kickoff has passed.
+  const entry=slipLiveCache.get(String(g.espnEventId));
+  if(entry?.status==='completed')return 'completed';
+  if(entry?.status==='live')return 'live';
+  if(/in progress|halftime|quarter|end of|^q[1-4]\b/i.test(g.gameStatus||''))return 'live';
+  return 'upcoming';
+}
+function slipSortGame(g){
+  const status=slipStatus(g);
+  return status==='live'?0:status==='upcoming'?1:2;
+}
+function slipSort(a,b){
+  const ga=gameById(a.gameId),gb=gameById(b.gameId);
+  return slipSortGame(ga)-slipSortGame(gb)||
+    (Date.parse(ga?.commenceTime||'')||0)-(Date.parse(gb?.commenceTime||'')||0);
+}
+function slipLogos(g,betType,selection){
+  if(!g)return '';
+  if(betType==='Total')return `<div class="tp-slip-dual-logos">${renderMiniTeamLogo(g.away)}${renderMiniTeamLogo(g.home)}</div>`;
+  const team=selection===g.away?g.away:selection===g.home?g.home:null;
+  return team?`<div class="tp-slip-logos">${renderMiniTeamLogo(team)}</div>`:'';
+}
+function slipLiveLine(g,kind){
+  const e=slipLiveCache.get(String(g?.espnEventId));
+  if(!e?.prob||!e?.reference)return '';
+  const pct=v=>Number.isFinite(v)?`${(v*100).toFixed(1)}%`:'—';
+  const homeSpread=e.reference.spread;
+  if(kind==='Moneyline')return '';
+  if(kind==='Spread')return Number.isFinite(homeSpread)?`${g.home} ${signed(homeSpread)}`:'';
+  if(kind==='Total')return Number.isFinite(e.reference.total)?`O/U ${e.reference.total}`:'';
+  return '';
+}
+function slipProbability(g,kind,selection,line){
+  const e=slipLiveCache.get(String(g?.espnEventId));
+  if(!e?.prob||e.status!=='live'||!e.fetchedAt||Date.now()-e.fetchedAt>12*60*1000)return '';
+  const p=e.prob;
+  let value=null,ref='';
+  if(kind==='Moneyline')value=selection===g.home?p.home:selection===g.away?1-p.home:null;
+  else if(kind==='Spread'){
+    value=selection===g.home?p.cover:selection===g.away?1-p.cover-p.spreadPush:null;
+    ref=slipLiveLine(g,kind);
+  }else if(kind==='Total'){
+    value=selection==='Over'?p.over:selection==='Under'?1-p.over-p.totalPush:null;
+    ref=slipLiveLine(g,kind);
+  }
+  if(!Number.isFinite(value))return '';
+  const age=Math.max(0,Math.floor((Date.now()-e.fetchedAt)/60000));
+  const lineDiff=kind==='Spread'&&Number.isFinite(e.reference?.spread)&&Number.isFinite(Number(line))?
+    Math.abs(Number(line)-(selection===g.home?e.reference.spread:-e.reference.spread))>0.01:
+    kind==='Total'&&Number.isFinite(e.reference?.total)&&Number.isFinite(Number(line))?
+      Math.abs(Number(line)-e.reference.total)>0.01:false;
+  const note=kind==='Moneyline'?'ESPN win probability':
+    `ESPN ${kind==='Spread'?'cover':'total'} projection${ref?` · ESPN-listed ${ref}`:' · reference line unverified'}${lineDiff?' · differs from your wager':''}`;
+  return `<div class="tp-slip-projection"><strong>${(Math.max(0,Math.min(1,value))*100).toFixed(1)}%</strong><span>${escapeAttr(note)} · refreshed ${age}m ago</span></div>`;
+}
+function slipGameInfo(g,kind,selection,line){
+  if(!g)return '';
+  const status=slipStatus(g);
+  if(status==='upcoming'){
+    const k=formatKickoff(g.commenceTime);
+    return `<div class="tp-slip-game-info">🕒 ${escapeAttr(k.date)} · ${escapeAttr(k.time||'Kickoff TBD')}</div>`;
+  }
+  const e=slipLiveCache.get(String(g.espnEventId));
+  const score=e?.score||((g.awayScore!=null&&g.homeScore!=null)?`${g.away} ${g.awayScore} · ${g.home} ${g.homeScore}`:'');
+  if(status==='completed')return `<div class="tp-slip-game-info">Final${score?` · ${escapeAttr(score)}`:''}</div>`;
+  return `<div class="tp-slip-game-info">● LIVE${score?` · ${escapeAttr(score)}`:''}${e?.clock?` · ${escapeAttr(e.clock)}`:''}</div>${slipProbability(g,kind,selection,line)||'<div class="tp-slip-game-info">ESPN projection unavailable</div>'}`;
+}
+async function refreshSlipLive(){
+  if(slipLiveRefreshRunning||!state.user||state.view!=='slip'||document.visibilityState==='hidden')return;
+  const ids=new Map();
+  for(const w of weekWagers(state.selectedWeek)){
+    const g=gameById(w.gameId);
+    if(g?.espnEventId&&!g.gameCompleted&&Date.parse(g.commenceTime||'')<=Date.now())ids.set(String(g.espnEventId),g);
+  }
+  for(const p of weekParlays(state.selectedWeek))for(const leg of legsForParlay(p.id)){
+    const g=gameById(leg.gameId);
+    if(g?.espnEventId&&!g.gameCompleted&&Date.parse(g.commenceTime||'')<=Date.now())ids.set(String(g.espnEventId),g);
+  }
+  if(!ids.size)return;
+  if([...ids.keys()].every(id=>{const x=slipLiveCache.get(id);return x?.fetchedAt&&Date.now()-x.fetchedAt<4*60*1000;}))return;
+  slipLiveRefreshRunning=true;
+  try{
+    for(const [id,g] of ids){
+      const old=slipLiveCache.get(id);
+      if(old?.fetchedAt&&Date.now()-old.fetchedAt<4*60*1000)continue;
+      try{
+        const summary=await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=${encodeURIComponent(id)}`).then(r=>{if(!r.ok)throw Error('ESPN summary unavailable');return r.json();});
+        const comp=summary.header?.competitions?.[0];
+        const stateName=comp?.status?.type?.state||'';
+        const status=stateName==='post'?'completed':stateName==='in'?'live':'upcoming';
+        const score=(comp?.competitors||[]).map(c=>`${c.team?.abbreviation||c.team?.displayName||''} ${c.score??''}`).join(' · ');
+        const clock=comp?.status?.type?.shortDetail||'';
+        let prob=null;
+        if(status==='live'){
+          const core=await fetch(`https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/events/${id}/competitions/${id}/probabilities?limit=1&page=1`).then(r=>r.json());
+          // Request the last page, not the first historical probability.
+          const pages=Number(core.pageCount)||1;
+          const latest=pages>1?await fetch(`https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/events/${id}/competitions/${id}/probabilities?limit=1&page=${pages}`).then(r=>r.json()):core;
+          const ref=latest.items?.[0]?.['$ref'];
+          if(ref){
+            const data=await fetch(ref.replace(/^http:/,'https:')).then(r=>r.json());
+            const num=v=>v==null?null:Number(v);
+            const home=num(data.homeWinPercentage),cover=num(data.spreadCoverProbHome),over=num(data.totalOverProb);
+            if([home,cover,over].every(v=>Number.isFinite(v)&&v>=0&&v<=1))
+              prob={home,cover,over,spreadPush:num(data.spreadPushProb)||0,totalPush:num(data.totalPushProb)||0};
+          }
+        }
+        const odds=summary.pickcenter?.[0];
+        const spread=odds?.spread==null?null:Number(odds.spread);
+        const total=odds?.overUnder==null?null:Number(odds.overUnder);
+        slipLiveCache.set(id,{status,score,clock,prob,reference:{spread,total},fetchedAt:Date.now()});
+      }catch(err){
+        // Retain only fresh prior values. Never invent a probability.
+        console.warn('TrackPicks ESPN live projection unavailable',id,err);
+      }
+    }
+    if(state.view==='slip')render();
+  }finally{slipLiveRefreshRunning=false;}
+}
+
 function renderStraightSlip(){
-  const gameOrder=new Map(weekGames(state.selectedWeek).map((g,i)=>[g.id,i]));
-  const wagers=[...weekWagers(state.selectedWeek)].sort((a,b)=>{
-    const ai=gameOrder.has(a.gameId)?gameOrder.get(a.gameId):Number.MAX_SAFE_INTEGER;
-    const bi=gameOrder.has(b.gameId)?gameOrder.get(b.gameId):Number.MAX_SAFE_INTEGER;
-    return ai-bi;
-  });
+  const wagers=[...weekWagers(state.selectedWeek)].sort(slipSort);
   if(!wagers.length)return `<div class="empty compact-empty">No saved straight picks yet. Open the Full Slate tab and select a game.</div>`;
   return wagers.map(w=>{
     const g=gameById(w.gameId); if(!g)return'';
     const result=w.result||'Pending',caution=isCautioned(g.id),reviewReason=state.gradingReviews.straight[w.id]||'';
     return `<div class="slip-card compact-slip ${caution?'cautioned':''}">
-      <div class="slip-main"><div class="slip-copy"><div class="slip-pick">${caution?'<span class="caution-icon">⚠️</span> ':''}${w.pick}${reviewReason?` <button type="button" class="manual-review-icon" data-straight-review-info="${w.id}" aria-label="Manual grading review required" title="Manual grading review required">ⓘ</button>`:''}</div><div class="slip-meta">${g.away} @ ${g.home}</div><div class="slip-meta">${w.who} · <strong>${Number(w.units).toFixed(1)}u</strong> · <strong>${formatAmericanOdds(w.payoutOdds)}</strong>${reviewReason?' · <strong class="manual-review-text">Manual review</strong>':''}</div></div><div class="slip-right"><span class="result-badge ${resultClassFor(result)}">${result}</span><button class="remove-btn compact-remove" data-remove="${w.id}">Remove</button></div></div>
+      <div class="slip-main">${slipLogos(g,w.betType,w.selection)}<div class="slip-copy"><div class="slip-pick">${caution?'<span class="caution-icon">⚠️</span> ':''}${escapeAttr(w.pick)}${reviewReason?` <button type="button" class="manual-review-icon" data-straight-review-info="${w.id}" aria-label="Manual grading review required" title="Manual grading review required">ⓘ</button>`:''}</div><div class="slip-meta">${escapeAttr(g.away)} @ ${escapeAttr(g.home)}</div><div class="slip-meta">${escapeAttr(w.who)} · <strong>${Number(w.units).toFixed(1)}u</strong> · <strong>${formatAmericanOdds(w.payoutOdds)}</strong>${reviewReason?' · <strong class="manual-review-text">Manual review</strong>':''}</div></div><div class="slip-right"><span class="result-badge ${resultClassFor(result)}">${escapeAttr(result)}</span><button class="remove-btn compact-remove" data-remove="${w.id}">Remove</button></div></div>
+      ${slipGameInfo(g,w.betType,w.selection,w.line)}
       <div class="slip-actions compact-actions"><button class="secondary compact-btn" data-edit="${w.id}">Edit Pick</button><button class="secondary compact-btn" data-open-game="${g.id}">Game</button><button class="secondary compact-btn" data-result-menu="${w.id}">${result==='Pending'?'Set Result':'Edit Result'}</button></div>
       <div class="result-picker" data-result-picker-for="${w.id}" hidden>${['Win','Loss','Push','DDL'].map(r=>`<button class="result-choice ${r.toLowerCase()}" data-set-result="${w.id}" data-result="${r}">${r}</button>`).join('')}</div>
     </div>`;
@@ -3369,10 +3495,10 @@ function renderSavedParlay(p){
   const backendReview=state.gradingReviews.parlays[p.id]||'';
   const needsManualReview=hasPushedLeg||!!backendReview;
   const reviewKind=hasPushedLeg?'push':'safety';
-  return `<div class="slip-card parlay-card"><div class="slip-main"><div class="slip-copy"><div class="slip-pick">${legs.length}-Leg ${p.isTeaser?`${Number(p.teaserPoints)}-Point Teaser`:'Parlay'}${needsManualReview?` <button type="button" class="manual-review-icon" data-parlay-review-info="${p.id}" data-review-kind="${reviewKind}" aria-label="Manual grading review required" title="Manual grading review required">ⓘ</button>`:''}</div><div class="slip-meta">${p.who} · <strong>${Number(p.units).toFixed(1)}u</strong> · <strong>${formatAmericanOdds(p.odds)}</strong>${profit!=null?` · To win ${profit.toFixed(2)}u`:''}${needsManualReview?` · <strong class="manual-review-text">Manual review</strong>`:''}</div></div><div class="slip-right"><span class="result-badge ${resultClassFor(result)}">${result}</span><button class="remove-btn compact-remove" data-remove-parlay="${p.id}">Remove</button></div></div><div class="saved-parlay-legs">${legs.map(l=>`<div class="saved-parlay-leg"><span>${escapeAttr(l.pick)}</span><span class="leg-result-badge ${resultClassFor(l.result||'Pending')}">${escapeAttr(l.result||'Pending')}</span></div>`).join('')}</div><div class="slip-actions compact-actions"><button class="secondary compact-btn" data-edit-parlay="${p.id}">Edit Parlay</button><button class="secondary compact-btn" data-parlay-result-menu="${p.id}">${result==='Pending'?'Set Result':'Edit Result'}</button></div><div class="result-picker" data-parlay-result-picker-for="${p.id}" hidden>${['Win','Loss','Push','DDL'].map(r=>`<button class="result-choice ${r.toLowerCase()}" data-set-parlay-result="${p.id}" data-result="${r}">${r}</button>`).join('')}</div></div>`;
+  return `<div class="slip-card parlay-card"><div class="slip-main"><div class="slip-copy"><div class="slip-pick">${legs.length}-Leg ${p.isTeaser?`${Number(p.teaserPoints)}-Point Teaser`:'Parlay'}${needsManualReview?` <button type="button" class="manual-review-icon" data-parlay-review-info="${p.id}" data-review-kind="${reviewKind}" aria-label="Manual grading review required" title="Manual grading review required">ⓘ</button>`:''}</div><div class="slip-meta">${p.who} · <strong>${Number(p.units).toFixed(1)}u</strong> · <strong>${formatAmericanOdds(p.odds)}</strong>${profit!=null?` · To win ${profit.toFixed(2)}u`:''}${needsManualReview?` · <strong class="manual-review-text">Manual review</strong>`:''}</div></div><div class="slip-right"><span class="result-badge ${resultClassFor(result)}">${result}</span><button class="remove-btn compact-remove" data-remove-parlay="${p.id}">Remove</button></div></div><div class="saved-parlay-legs">${legs.map(l=>`<div class="saved-parlay-leg"><span class="tp-slip-parlay-leg-main">${slipLogos(gameById(l.gameId),l.betType,l.selection)}<span>${escapeAttr(l.pick)}${slipGameInfo(gameById(l.gameId),l.betType,l.selection,l.line??l.sourceLine)}</span></span><span class="leg-result-badge ${resultClassFor(l.result||'Pending')}">${escapeAttr(l.result||'Pending')}</span></div>`).join('')}</div><div class="slip-actions compact-actions"><button class="secondary compact-btn" data-edit-parlay="${p.id}">Edit Parlay</button><button class="secondary compact-btn" data-parlay-result-menu="${p.id}">${result==='Pending'?'Set Result':'Edit Result'}</button></div><div class="result-picker" data-parlay-result-picker-for="${p.id}" hidden>${['Win','Loss','Push','DDL'].map(r=>`<button class="result-choice ${r.toLowerCase()}" data-set-parlay-result="${p.id}" data-result="${r}">${r}</button>`).join('')}</div></div>`;
 }
 function renderParlaysSlip(){
-  const d=state.parlayDraft, saved=weekParlays(state.selectedWeek), names=effectivePickerNames(),profit=americanProfitUnits(d.units,d.odds);
+  const d=state.parlayDraft, saved=[...weekParlays(state.selectedWeek)].sort((a,b)=>{const ga=legsForParlay(a.id).map(l=>gameById(l.gameId)).filter(Boolean),gb=legsForParlay(b.id).map(l=>gameById(l.gameId)).filter(Boolean);const rank=gs=>gs.length?Math.min(...gs.map(slipSortGame)):2;return rank(ga)-rank(gb)||(Math.min(...ga.map(g=>Date.parse(g.commenceTime)||0),Infinity)-Math.min(...gb.map(g=>Date.parse(g.commenceTime)||0),Infinity));}), names=effectivePickerNames(),profit=americanProfitUnits(d.units,d.odds);
   const hasMoneyline=d.legs.some(l=>l.betType==='Moneyline');
   const teaserBlocked=hasMoneyline&&!d.isTeaser;
   const builder=`<div class="parlay-builder">
@@ -3403,7 +3529,11 @@ function renderParlaysSlip(){
 }
 function renderSlip(){
   const pushControls=`<div class="push-results-row"><button class="primary push-results-btn" data-push-results ${state.pushingResults?'disabled':''}>${state.pushingResults?'Checking Results…':'Push Results'}</button>${state.pushResultsMessage?`<div class="push-results-message">${escapeAttr(state.pushResultsMessage)}</div>`:''}</div>`;
-  return `<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
+  const all=[...weekWagers(state.selectedWeek),...weekParlays(state.selectedWeek)];
+  const count=r=>all.filter(w=>(w.result||'Pending')===r).length;
+  const wins=count('Win'),losses=count('Loss'),pushes=count('Push'),pending=all.length-wins-losses-pushes;
+  const record=`<div class="tp-slip-record"><div class="tp-slip-record-title">Week ${state.selectedWeek} Record <strong>${wins}–${losses}${pushes?`–${pushes}`:''}</strong></div><div class="tp-slip-record-grid"><span><b>${wins}</b>Wins</span><span><b>${losses}</b>Losses</span><span><b>${pushes}</b>Pushes</span><span><b>${pending}</b>Pending / Review</span></div></div>`;
+  return `${record}<div class="slip-tabs"><button class="slip-tab ${state.slipTab==='straight'?'active':''}" data-slip-tab="straight">Straight Picks (${weekWagers(state.selectedWeek).length})</button><button class="slip-tab ${state.slipTab==='parlays'?'active':''}" data-slip-tab="parlays">Parlays (${weekParlays(state.selectedWeek).length})${state.parlayDraft.legs.length?` <span class="draft-dot">${state.parlayDraft.legs.length}</span>`:''}</button></div>${pushControls}${state.slipTab==='straight'?renderStraightSlip():renderParlaysSlip()}`;
 }
 function wagerMovementSignals(g){
   const history=oddsHistoryForGame(g);
@@ -5383,6 +5513,7 @@ function exportCSV(){
 initCloud();
 ensureFreshPwaController(); checkForAppUpdate();
 setInterval(checkForAppUpdate, 5 * 60 * 1000);
+setInterval(refreshSlipLive, 5 * 60 * 1000);
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') ensureFreshPwaController(); checkForAppUpdate(); });
 
 if(typeof document!=='undefined'){
