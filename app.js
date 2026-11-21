@@ -1,4 +1,4 @@
-const BUILD_VERSION = '4.0.0-dev.1';
+const BUILD_VERSION = '3.2.4';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -194,35 +194,7 @@ function marketOddsFor(g,kind,selection){
   if(kind==='Moneyline')return selection===g.away?g.awayMoneyline:selection===g.home?g.homeMoneyline:null;
   return null;
 }
-// Slate sorting uses the last Central-time refresh boundary, not the current minute.
-// This keeps cards from jumping around as kickoffs occur between scheduled reorders.
-function centralClockParts(date){
-  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23',weekday:'short'}).formatToParts(date);
-  return Object.fromEntries(parts.filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
-}
-function slateSortBoundary(now=new Date()){
-  // Scan backwards by minute for the latest scheduled boundary; at most 32 hours.
-  // The absolute timestamp naturally handles Central daylight-saving transitions.
-  const base=Math.floor(now.getTime()/60000)*60000;
-  for(let offset=0;offset<=32*60;offset++){
-    const stamp=base-offset*60000;
-    const p=centralClockParts(new Date(stamp));
-    const hour=Number(p.hour);
-    if(p.minute==='00'&&(hour===3||(p.weekday==='Sat'&&hour>=15&&hour<=23)))return stamp;
-  }
-  return base;
-}
-function sortSlateGames(games,boundary=slateSortBoundary()){
-  return [...games].sort((a,b)=>{
-    const ta=Date.parse(a.commenceTime),tb=Date.parse(b.commenceTime);
-    const aValid=Number.isFinite(ta),bValid=Number.isFinite(tb);
-    const aPast=aValid&&ta<boundary,bPast=bValid&&tb<boundary;
-    if(aPast!==bPast)return aPast?1:-1;
-    if(aValid!==bValid)return aValid?-1:1;
-    return (aValid?ta-tb:0)||String(a.id).localeCompare(String(b.id));
-  });
-}
-function weekGames(week){ return sortSlateGames(state.games.filter(g=>g.week===week)); }
+function weekGames(week){ return state.games.filter(g=>g.week===week).sort((a,b)=>new Date(a.commenceTime)-new Date(b.commenceTime)); }
 function weekWagers(week){ return state.wagers.filter(w=>gameById(w.gameId)?.week===week); }
 function weekParlays(week){ return state.parlays.filter(p=>Number(p.week)===Number(week)); }
 
@@ -5559,16 +5531,7 @@ initCloud();
 ensureFreshPwaController(); checkForAppUpdate();
 setInterval(checkForAppUpdate, 5 * 60 * 1000);
 setInterval(refreshSlipLive, 5 * 60 * 1000);
-let lastSlateSortBoundary=slateSortBoundary();
-function refreshSlateAtBoundary(){
-  const next=slateSortBoundary();
-  if(next===lastSlateSortBoundary)return;
-  lastSlateSortBoundary=next;
-  // Never interrupt an open game sheet, editing flow, or other screen.
-  if(state.view==='market'&&!state.activeGameId&&!state.showSettings&&!state.showScreenshotImporter&&!state.screenshotImportFlow)render();
-}
-setInterval(refreshSlateAtBoundary,30*1000);
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') {ensureFreshPwaController(); refreshSlateAtBoundary();} checkForAppUpdate(); });
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') ensureFreshPwaController(); checkForAppUpdate(); });
 
 if(typeof document!=='undefined'){
   const slateShortNameObserver=new MutationObserver(()=>detectSlateShortNameNeeds());
