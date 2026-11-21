@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.2.3';
+const BUILD_VERSION = '3.2.4';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -224,7 +224,9 @@ function rankingForTeam(name,week=state.selectedWeek){
   if(!teamId)return null;
   const rows=(state.cfbRankings||[]).filter(r=>Number(r.week)===Number(week) && String(r.teamId)===teamId);
   if(!rows.length)return null;
-  return rows.find(r=>r.pollType==='cfp')||rows.find(r=>r.pollType==='ap')||rows[0];
+  const weeklyRows=(state.cfbRankings||[]).filter(r=>Number(r.week)===Number(week));
+  const activePoll=weeklyRows.some(r=>r.pollType==='cfp')?'cfp':'ap';
+  return rows.find(r=>r.pollType===activePoll)||null;
 }
 function teamMonogram(name){
   const words=String(name||'').replace(/\([^)]*\)/g,'').trim().split(/\s+/).filter(Boolean);
