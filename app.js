@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.2.2';
+const BUILD_VERSION = '3.2.3';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -116,7 +116,7 @@ const STORAGE = {
 const WEEK_WINDOWS = {};
 (function buildWeekWindows(){
   const week4Start = new Date('2026-09-21T05:00:00Z');
-  for (let w = 0; w <= 12; w++) {
+  for (let w = 0; w <= 13; w++) {
     const start = new Date(week4Start.getTime() + (w - 4) * 7 * 24 * 60 * 60 * 1000);
     const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000 - 1000);
     WEEK_WINDOWS[w] = { start: start.toISOString().replace('.000Z','Z'), end: end.toISOString().replace('.000Z','Z') };
@@ -139,7 +139,7 @@ const state = {
   supabaseKey: 'sb_publishable_sxuPFdJVj5xQF7iIPs2FzQ_k1alR7Zy',
   sb: null, session: null, user: null,
   authReady: false,
-  weeks: Array.from({ length: 12 }, (_, i) => ({ week: i + 1, enabled: i + 1 >= 4 })),
+  weeks: Array.from({ length: 13 }, (_, i) => ({ week: i + 1, enabled: i + 1 >= 4 })),
   games: [], wagers: [], cautionGameIds: [], oddsHistory: [], earlyLineHistory: [], publicBettingSnapshots: [], publicApiUsage: [],
   cfbTeams: [], cfbAliases: [], cfbRankings: [], lastOddsPullAt: null,
   slateDivision: 'FBS', slateConference: 'All', slateSearch: '',
@@ -437,9 +437,9 @@ function dashboardSummary(tickets){
 function dashboardTargetWeek(now=new Date()){
   const start=Date.parse(WEEK_WINDOWS[4]?.start||'2026-09-21T05:00:00Z');
   const n=Math.floor((now.getTime()-start)/(7*24*60*60*1000))+4;
-  if(n<4||n>12)return null;
+  if(n<4||n>13)return null;
   const weekday=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short'}).format(now);
-  return weekday==='Sun'&&n<12?n+1:n;
+  return weekday==='Sun'&&n<13?n+1:n;
 }
 function dashboardLastWeek(){
   const gradedWeeks=[...new Set(
@@ -891,12 +891,27 @@ async function initCloud(){
   state.authReady=true; render();
 }
 
+// Page season games deterministically to avoid Supabase's 1,000-row default cap.
+// Preserve all game IDs and existing odds; never write during sync.
+async function fetchAllSeasonGames(){
+  const pageSize=500, rows=[];
+  for(let offset=0;;offset+=pageSize){
+    const {data,error}=await state.sb.from('games').select('*')
+      .eq('season',2026).gte('week',0).lte('week',13)
+      .order('id',{ascending:true}).range(offset,offset+pageSize-1);
+    if(error)return {data:[],error};
+    rows.push(...(data||[]));
+    if(!data||data.length<pageSize)break;
+  }
+  return {data:rows,error:null};
+}
+
 async function syncFromCloud(){
   if(!state.sb||!state.user)return;
   state.syncing=true; render();
   try{
     const [gamesRes,wagersRes,flagsRes,teamsRes,aliasesRes,rankingsRes,publicBettingRes,publicApiUsageRes]=await Promise.all([
-      state.sb.from('games').select('*').eq('season',2026).gte('week',0).lte('week',12),
+      fetchAllSeasonGames(),
       state.sb.from('wagers').select('*').eq('user_id',state.user.id),
       state.sb.from('user_game_flags').select('game_id,caution').eq('user_id',state.user.id).eq('caution',true),
       state.sb.from('cfb_teams').select('espn_name,espn_team_id,conference,subdivision,season,abbreviation,logo_url,short_display_name,short_nickname,smaller_font,smaller_nickname_font,extra_small_nickname_font').eq('season',2026),
@@ -927,7 +942,7 @@ async function syncFromCloud(){
     const earlyRes=await fetchEarlyLineHistory();
     state.earlyLineHistory=earlyRes.error?[]:(earlyRes.data||[]);
     const [parlaysRes,parlayLegsRes]=await Promise.all([
-      state.sb.from('parlays').select('*').eq('user_id',state.user.id).eq('season',2026).gte('week',0).lte('week',12).order('created_at',{ascending:true}),
+      state.sb.from('parlays').select('*').eq('user_id',state.user.id).eq('season',2026).gte('week',0).lte('week',13).order('created_at',{ascending:true}),
       state.sb.from('parlay_legs').select('*').eq('user_id',state.user.id).order('leg_order',{ascending:true})
     ]);
     state.parlays=parlaysRes.error?[]:(parlaysRes.data||[]).map(fromDbParlay);
@@ -971,7 +986,7 @@ async function fetchAllOddsHistory(){
       .select('*')
       .eq('season',2026)
       .gte('week',0)
-      .lte('week',12)
+      .lte('week',13)
       .order('captured_at',{ascending:true})
       .range(from,from+pageSize-1);
     if(res.error)return {data:rows,error:res.error};
@@ -4753,7 +4768,7 @@ async function loadSelectedWeek(){
   if(!state.isAdmin){alert('Only the admin account can load or refresh the weekly board.');return;}
   if(!state.apiKey){state.showSettings=true;state.importMessage='Add your Odds API key first.';render();return;}
   const win=WEEK_WINDOWS[state.selectedWeek];
-  if(!win){state.importMessage='Live imports currently support Weeks 4–12.';render();return;}
+  if(!win){state.importMessage='Live imports currently support Weeks 4–13.';render();return;}
 
   state.loadingWeek=true;
   state.importMessage='';
@@ -5068,7 +5083,7 @@ function prepareHistoryImport(parsed){
   for(const raw of parsed.rows||[]){
     const prefix=`Row ${raw.rowNumber}`;
     const week=Number(raw.week);
-    if(!Number.isInteger(week)||week<0||week>12){errors.push(`${prefix}: Week must be 0–12.`);continue;}
+    if(!Number.isInteger(week)||week<0||week>13){errors.push(`${prefix}: Week must be 0–13.`);continue;}
 
     const betType=normalizeImportedBetType(raw.betType);
     if(!betType){errors.push(`${prefix}: Bet Type must be Spread, Total, or Moneyline.`);continue;}
