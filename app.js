@@ -1,4 +1,4 @@
-const BUILD_VERSION = '3.2.4';
+const BUILD_VERSION = '4.0.0-beta.1';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -194,7 +194,35 @@ function marketOddsFor(g,kind,selection){
   if(kind==='Moneyline')return selection===g.away?g.awayMoneyline:selection===g.home?g.homeMoneyline:null;
   return null;
 }
-function weekGames(week){ return state.games.filter(g=>g.week===week).sort((a,b)=>new Date(a.commenceTime)-new Date(b.commenceTime)); }
+// One Central-time clock lookup per check; never scan minute by minute.
+const slateClockFormatter=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+function slateClock(date){
+  const p=Object.fromEntries(slateClockFormatter.formatToParts(date).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));
+  return {weekday:p.weekday,hour:Number(p.hour),minute:Number(p.minute)};
+}
+function isSlateSortHour(p){return p.hour===3||(p.weekday==='Sat'&&p.hour>=15&&p.hour<=23);}
+function findSlateSortBoundary(now=Date.now()){
+  // Only 33 hourly probes on initial load, not 1,921 minute probes on every render.
+  const hourStart=Math.floor(now/3600000)*3600000;
+  for(let i=0;i<=33;i++){
+    const candidate=hourStart-i*3600000;
+    if(isSlateSortHour(slateClock(new Date(candidate))))return candidate;
+  }
+  return hourStart;
+}
+let activeSlateSortBoundary=findSlateSortBoundary();
+function sortSlateGames(games){
+  const boundary=activeSlateSortBoundary;
+  return [...games].sort((a,b)=>{
+    const ta=Date.parse(a.commenceTime),tb=Date.parse(b.commenceTime);
+    const va=Number.isFinite(ta),vb=Number.isFinite(tb);
+    const pa=va&&ta<boundary,pb=vb&&tb<boundary;
+    if(pa!==pb)return pa?1:-1;
+    if(va!==vb)return va?-1:1;
+    return (va?ta-tb:0)||String(a.id).localeCompare(String(b.id));
+  });
+}
+function weekGames(week){ return sortSlateGames(state.games.filter(g=>g.week===week)); }
 function weekWagers(week){ return state.wagers.filter(w=>gameById(w.gameId)?.week===week); }
 function weekParlays(week){ return state.parlays.filter(p=>Number(p.week)===Number(week)); }
 
@@ -5531,7 +5559,17 @@ initCloud();
 ensureFreshPwaController(); checkForAppUpdate();
 setInterval(checkForAppUpdate, 5 * 60 * 1000);
 setInterval(refreshSlipLive, 5 * 60 * 1000);
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') ensureFreshPwaController(); checkForAppUpdate(); });
+function checkSlateSortSchedule(){
+  const now=Date.now();
+  const p=slateClock(new Date(now));
+  if(p.minute!==0||!isSlateSortHour(p))return;
+  const boundary=Math.floor(now/3600000)*3600000;
+  if(boundary<=activeSlateSortBoundary)return;
+  activeSlateSortBoundary=boundary;
+  if(state.view==='market'&&!state.activeGameId&&!state.showSettings&&!state.showScreenshotImporter&&!state.screenshotImportFlow)render();
+}
+setInterval(checkSlateSortSchedule,30000);
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') {ensureFreshPwaController();checkSlateSortSchedule();} checkForAppUpdate(); });
 
 if(typeof document!=='undefined'){
   const slateShortNameObserver=new MutationObserver(()=>detectSlateShortNameNeeds());
