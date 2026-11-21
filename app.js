@@ -1,4 +1,4 @@
-const BUILD_VERSION = '4.0.0-beta.1';
+const BUILD_VERSION = '4.0.0-beta.2';
 let deployedVersion = BUILD_VERSION;
 
 function versionStamp(){ return `Version ${BUILD_VERSION}`; }
@@ -140,6 +140,7 @@ const state = {
   sb: null, session: null, user: null,
   authReady: false,
   weeks: Array.from({ length: 13 }, (_, i) => ({ week: i + 1, enabled: i + 1 >= 4 })),
+  postseasonEvents: [], postseasonView: 'regular', cfpRound: null,
   games: [], wagers: [], cautionGameIds: [], oddsHistory: [], earlyLineHistory: [], publicBettingSnapshots: [], publicApiUsage: [],
   cfbTeams: [], cfbAliases: [], cfbRankings: [], lastOddsPullAt: null,
   slateDivision: 'FBS', slateConference: 'All', slateSearch: '',
@@ -363,7 +364,8 @@ function gameMatchesConference(g,filter){
   return confs.includes(filter);
 }
 function baseFilteredSlateGames(){
-  const games=weekGames(state.selectedWeek);
+  const games=selectedMarketGames();
+  if(state.postseasonView!=='regular')return games;
   if(state.slateDivision==='FCS') return games.filter(g=>g.sourceSportKey==='americanfootball_ncaaf_fcs');
   return games.filter(g=>g.sourceSportKey==='americanfootball_ncaaf').filter(g=>gameMatchesConference(g,state.slateConference));
 }
@@ -927,7 +929,7 @@ async function fetchAllSeasonGames(){
   const pageSize=500, rows=[];
   for(let offset=0;;offset+=pageSize){
     const {data,error}=await state.sb.from('games').select('*')
-      .eq('season',2026).gte('week',0).lte('week',13)
+      .eq('season',2026).gte('week',0).lte('week',20)
       .order('id',{ascending:true}).range(offset,offset+pageSize-1);
     if(error)return {data:[],error};
     rows.push(...(data||[]));
@@ -940,7 +942,7 @@ async function syncFromCloud(){
   if(!state.sb||!state.user)return;
   state.syncing=true; render();
   try{
-    const [gamesRes,wagersRes,flagsRes,teamsRes,aliasesRes,rankingsRes,publicBettingRes,publicApiUsageRes]=await Promise.all([
+    const [gamesRes,wagersRes,flagsRes,teamsRes,aliasesRes,rankingsRes,publicBettingRes,publicApiUsageRes,postseasonRes]=await Promise.all([
       fetchAllSeasonGames(),
       state.sb.from('wagers').select('*').eq('user_id',state.user.id),
       state.sb.from('user_game_flags').select('game_id,caution').eq('user_id',state.user.id).eq('caution',true),
@@ -948,7 +950,8 @@ async function syncFromCloud(){
       state.sb.from('cfb_team_aliases').select('provider,alias,espn_name'),
       state.sb.from('cfb_rankings').select('season,week,poll_type,poll_name,rank,team_id,published_at').eq('season',2026).gte('week',0).lte('week',20),
       fetchAllPublicBettingSnapshots(),
-      state.sb.from('lumify_api_usage').select('*').limit(200)
+      state.sb.from('lumify_api_usage').select('*').limit(200),
+      state.sb.from('trackpicks_postseason_events').select('espn_event_id,category,cfp_round').eq('season',2026)
     ]);
     if(gamesRes.error)throw gamesRes.error;
     if(wagersRes.error)throw wagersRes.error;
@@ -958,6 +961,7 @@ async function syncFromCloud(){
     if(rankingsRes.error)throw rankingsRes.error;
     if(publicBettingRes.error)throw publicBettingRes.error;
     state.games=(gamesRes.data||[]).map(fromDbGame);
+    state.postseasonEvents=postseasonRes.error?[]:(postseasonRes.data||[]);
     state.wagers=(wagersRes.data||[]).map(fromDbWager);
     state.cautionGameIds=(flagsRes.data||[]).map(r=>r.game_id);
     state.cfbTeams=(teamsRes.data||[]).map(r=>({espnName:r.espn_name,espnTeamId:r.espn_team_id||'',conference:r.conference,subdivision:r.subdivision,season:r.season,abbreviation:r.abbreviation||'',logoUrl:r.logo_url||'',shortDisplayName:r.short_display_name||'',shortNickname:r.short_nickname||'',smallerFont:!!r.smaller_font,smallerNicknameFont:!!r.smaller_nickname_font,extraSmallNicknameFont:!!r.extra_small_nickname_font}));
@@ -3156,14 +3160,44 @@ function renderCloudSetup(){ return `<div class="auth-shell"><div class="auth-ca
 
 function renderAuth(){ const signup=state.authMode==='signup'; return `<div class="auth-shell"><div class="auth-card"><img class="tp31-login-logo" src="trackpicks-wordmark.png" alt="TrackPicks"><div class="auth-subtitle">${versionStamp()} · Your picks, synced across devices.</div><div class="auth-tabs"><button class="auth-tab ${!signup?'active':''}" data-auth-mode="signin">Log In</button><button class="auth-tab ${signup?'active':''}" data-auth-mode="signup">Create Account</button></div><div class="auth-fields"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email"></div><div class="field"><label>Password</label><input id="authPassword" type="password" autocomplete="${signup?'new-password':'current-password'}"></div></div><button class="primary" data-auth-submit>${signup?'Create Account':'Log In'}</button>${state.authMessage?`<div class="auth-message ${/error|invalid|failed|wrong/i.test(state.authMessage)?'error':''}">${state.authMessage}</div>`:''}</div></div>`; }
 
+const POSTSEASON_ROUNDS=[['first_round','First Round'],['quarterfinal','Quarterfinals'],['semifinal','Semifinals'],['championship','Championship']];
+function postseasonGames(category){
+  const ids=new Set(state.postseasonEvents.filter(e=>e.category===category).map(e=>String(e.espn_event_id)));
+  return sortSlateGames(state.games.filter(g=>ids.has(String(g.espnEventId))));
+}
+function selectedCfpRound(){
+  if(state.cfpRound)return state.cfpRound;
+  const all=postseasonGames('cfp');
+  const byId=new Map(state.postseasonEvents.map(e=>[String(e.espn_event_id),e]));
+  const now=Date.now();
+  for(const [round] of POSTSEASON_ROUNDS){
+    const games=all.filter(g=>byId.get(String(g.espnEventId))?.cfp_round===round);
+    if(games.some(g=>!g.gameCompleted&&(!g.commenceTime||Date.parse(g.commenceTime)>=now)))return round;
+  }
+  for(const [round] of POSTSEASON_ROUNDS){
+    if(all.some(g=>byId.get(String(g.espnEventId))?.cfp_round===round&&!g.gameCompleted))return round;
+  }
+  return POSTSEASON_ROUNDS.find(([round])=>all.some(g=>byId.get(String(g.espnEventId))?.cfp_round===round))?.[0]||'first_round';
+}
+function selectedMarketGames(){
+  if(state.postseasonView==='regular')return weekGames(state.selectedWeek);
+  const category=state.postseasonView==='conference'?'conference_championship':state.postseasonView==='bowls'?'bowl':'cfp';
+  const games=postseasonGames(category);
+  if(category!=='cfp')return games;
+  const ids=new Set(state.postseasonEvents.filter(e=>e.category==='cfp'&&e.cfp_round===selectedCfpRound()).map(e=>String(e.espn_event_id)));
+  return games.filter(g=>ids.has(String(g.espnEventId)));
+}
 function headerWeekSelect(){
-  const weekOptions=state.weeks
-    .map(w=>`<option value="${w.week}" ${w.week===state.selectedWeek?'selected':''}>Week ${w.week}</option>`)
-    .join('');
-  return `<div class="app-header-week-wrap">
-    <select class="app-header-week" data-market-week aria-label="Select week">${weekOptions}</select>
-    <span class="app-header-week-chevron" aria-hidden="true">⌄</span>
-  </div>`;
+  const weekOptions=state.weeks.map(w=>`<option value="${w.week}" ${state.postseasonView==='regular'&&w.week===state.selectedWeek?'selected':''}>Week ${w.week}</option>`).join('');
+  return `<div class="app-header-week-wrap"><select class="app-header-week" data-market-period aria-label="Select slate">
+    <optgroup label="Regular Season">${weekOptions.replace(/value="(\d+)"/g,'value="week:$1"')}</optgroup>
+    <optgroup label="Postseason"><option value="conference" ${state.postseasonView==='conference'?'selected':''}>Conference Championships</option><option value="bowls" ${state.postseasonView==='bowls'?'selected':''}>Bowl Games</option><option value="cfp" ${state.postseasonView==='cfp'?'selected':''}>CFP</option></optgroup>
+  </select><span class="app-header-week-chevron" aria-hidden="true">⌄</span></div>`;
+}
+function renderPostseasonRoundFilter(){
+  if(state.postseasonView!=='cfp')return '';
+  const round=selectedCfpRound();
+  return `<div class="slate-filter-sub tp-postseason-rounds">${POSTSEASON_ROUNDS.map(([key,label])=>`<button class="slate-filter-btn ${round===key?'active':''}" data-cfp-round="${key}">${label}</button>`).join('')}</div>`;
 }
 
 function appHeader(leftHtml=''){
@@ -3261,12 +3295,12 @@ function bindTrends(){
 
 
 function renderMarket(){
-  const allGames=weekGames(state.selectedWeek),
+  const allGames=selectedMarketGames(),
         baseGames=baseFilteredSlateGames(),
         message=state.importMessage?`<div class="notice">${state.importMessage}</div>`:'',
-        filters=renderSlateFilters();
+        filters=state.postseasonView==='regular'?renderSlateFilters():`<div class="slate-controls">${renderPostseasonRoundFilter()}<div class="slate-search-wrap"><input class="slate-search-input" data-slate-search type="search" placeholder="Search teams" value="${escapeAttr(state.slateSearch||'')}"></div></div>`;
 
-  if(!allGames.length)return `${message}${filters}<div class="empty"><strong>No games loaded for Week ${state.selectedWeek}.</strong><br><br>${state.isAdmin?'Open <b>Settings → Admin Tools</b> to load or refresh the weekly slate.':'The weekly board has not been published yet.'}</div>`;
+  if(!allGames.length)return `${message}${filters}<div class="empty"><strong>No games loaded for ${state.postseasonView==='regular'?`Week ${state.selectedWeek}`:state.postseasonView==='conference'?'Conference Championships':state.postseasonView==='bowls'?'Bowl Games':`CFP ${POSTSEASON_ROUNDS.find(([r])=>r===selectedCfpRound())?.[1]||''}`}.</strong><br><br>${state.isAdmin?'Open <b>Settings → Admin Tools</b> to load or refresh the weekly slate.':'The weekly board has not been published yet.'}</div>`;
   if(!baseGames.length)return `${message}${filters}<div class="empty compact-empty">No games match this slate filter.</div>`;
 
   const visibleCount=baseGames.filter(g=>gameMatchesSlateSearch(g)).length;
@@ -4456,13 +4490,17 @@ function bindPickerSelectorLocal(){
 }
 
 function bind(){
-  document.querySelectorAll('[data-market-week]').forEach(el=>el.onchange=()=>{
-    state.selectedWeek=Number(el.value);
+  document.querySelectorAll('[data-market-period]').forEach(el=>el.onchange=()=>{
+    const value=el.value;
+    state.postseasonView=value.startsWith('week:')?'regular':value;
+    if(state.postseasonView==='regular')state.selectedWeek=Number(value.split(':')[1]);
+    state.cfpRound=null;
     state.slateDivision='FBS';
     state.slateConference='All';
     state.importMessage='';
     render();
   });
+  document.querySelectorAll('[data-cfp-round]').forEach(el=>el.onclick=()=>{state.cfpRound=el.dataset.cfpRound;render();});
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>{state.view=el.dataset.nav;render();if(state.view==='trends')loadConferenceTrends();});
   document.querySelectorAll('[data-settings]').forEach(el=>el.onclick=()=>{state.showSettings=true;render();});
   document.querySelectorAll('[data-launch-import]').forEach(el=>el.onclick=()=>{state.showScreenshotImporter=true;state.screenshotImportReadyToReview=false;render();});
